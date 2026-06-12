@@ -1,0 +1,48 @@
+.a11y-highlight-overlay {
+  outline: 3px solid #ff4444 !important;
+  outline-offset: 2px !important;
+  position: relative;
+}
+.a11y-highlight-overlay::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(255, 68, 68, 0.1);
+  pointer-events: none;
+  z-index: 2147483640;
+}
+.a11y-highlight-pass {
+  outline-color: #22c55e !important;
+}
+.a11y-highlight-pass::after {
+  background: rgba(34, 197, 94, 0.08);
+}
+.a11y-highlight-aa {
+  outline-color: #f59e0b !important;
+}
+.a11y-highlight-aa::after {
+  background: rgba(245, 158, 11, 0.08);
+}
+.a11y-picker-cursor {
+  cursor: crosshair !important;
+}
+.a11y-picker-cursor * {
+  cursor: crosshair !important;
+}
+.a11y-hover-outline {
+  outline: 2px dashed #3b82f6 !important;
+  outline-offset: 1px !important;
+}
+.a11y-badge {
+  position: fixed;
+  background: #1e293b;
+  color: #f8fafc;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  z-index: 2147483645;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}

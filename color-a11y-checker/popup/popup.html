@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg: #0f172a; --surface: #1e293b; --surface2: #334155;
+  --text: #f1f5f9; --text2: #94a3b8; --border: #475569;
+  --accent: #3b82f6; --accent2: #2563eb; --green: #22c55e;
+  --yellow: #f59e0b; --red: #ef4444; --orange: #f97316;
+}
+body { width:420px; min-height:500px; max-height:600px; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); font-size:13px; overflow:hidden; display:flex; flex-direction:column; }
+.tabs { display:flex; background:var(--surface); border-bottom:1px solid var(--border); flex-shrink:0; }
+.tab { flex:1; padding:9px 4px; text-align:center; cursor:pointer; font-size:11px; color:var(--text2); border-bottom:2px solid transparent; transition:all .15s; user-select:none; }
+.tab:hover { color:var(--text); background:rgba(59,130,246,.08); }
+.tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.panel { display:none; flex:1; overflow-y:auto; padding:12px; }
+.panel.active { display:block; }
+.panel::-webkit-scrollbar { width:5px; }
+.panel::-webkit-scrollbar-track { background:var(--bg); }
+.panel::-webkit-scrollbar-thumb { background:var(--surface2); border-radius:3px; }
+h3 { font-size:14px; font-weight:600; margin-bottom:10px; color:var(--text); }
+.stat-row { display:flex; gap:8px; margin-bottom:12px; }
+.stat-card { flex:1; background:var(--surface); border-radius:8px; padding:10px; text-align:center; }
+.stat-card .num { font-size:22px; font-weight:700; line-height:1.2; }
+.stat-card .label { font-size:10px; color:var(--text2); margin-top:2px; }
+.stat-card.fail .num { color:var(--red); }
+.stat-card.aa .num { color:var(--yellow); }
+.stat-card.aaa .num { color:var(--green); }
+.btn { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; transition:all .15s; }
+.btn-primary { background:var(--accent); color:#fff; }
+.btn-primary:hover { background:var(--accent2); }
+.btn-outline { background:transparent; border:1px solid var(--border); color:var(--text2); }
+.btn-outline:hover { border-color:var(--accent); color:var(--accent); }
+.btn-sm { padding:5px 10px; font-size:11px; }
+.btn-danger { background:var(--red); color:#fff; }
+.btn-danger:hover { background:#dc2626; }
+.btn-success { background:var(--green); color:#fff; }
+.scan-header { display:flex; gap:8px; margin-bottom:12px; align-items:center; }
+.scan-header .btn { flex:1; justify-content:center; }
+.result-item { background:var(--surface); border-radius:8px; padding:10px; margin-bottom:8px; border-left:3px solid var(--red); transition:all .15s; cursor:pointer; }
+.result-item:hover { background:var(--surface2); }
+.result-item.level-aa { border-left-color:var(--yellow); }
+.result-item.level-aaa { border-left-color:var(--green); }
+.result-top { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.color-swatch { width:18px; height:18px; border-radius:4px; border:1px solid var(--border); flex-shrink:0; }
+.result-ratio { font-weight:700; font-size:14px; }
+.result-level { font-size:10px; padding:2px 6px; border-radius:3px; font-weight:600; }
+.result-level.fail { background:rgba(239,68,68,.15); color:var(--red); }
+.result-level.aa { background:rgba(245,158,11,.15); color:var(--yellow); }
+.result-level.aaa { background:rgba(34,197,94,.15); color:var(--green); }
+.result-text { font-size:11px; color:var(--text2); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.result-meta { display:flex; gap:10px; font-size:10px; color:var(--text2); }
+.empty-state { text-align:center; padding:40px 20px; color:var(--text2); }
+.empty-state svg { margin-bottom:12px; opacity:.5; }
+.picker-info { background:var(--surface); border-radius:8px; padding:16px; text-align:center; }
+.picker-info p { color:var(--text2); font-size:12px; margin-top:8px; }
+.picked-result { background:var(--surface); border-radius:8px; padding:12px; margin-top:12px; }
+.picked-colors { display:flex; align-items:center; gap:8px; margin:8px 0; }
+.color-pair { display:flex; align-items:center; }
+.color-pair .swatch { width:28px; height:28px; border-radius:6px; border:1px solid var(--border); }
+.color-pair .on { font-size:11px; color:var(--text2); margin:0 6px; }
+.sim-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.sim-card { background:var(--surface); border-radius:8px; padding:10px; text-align:center; cursor:pointer; border:2px solid transparent; transition:all .15s; }
+.sim-card:hover { border-color:var(--accent); }
+.sim-card.active { border-color:var(--accent); background:rgba(59,130,246,.1); }
+.sim-card .sim-name { font-size:11px; font-weight:600; margin-bottom:2px; }
+.sim-card .sim-desc { font-size:10px; color:var(--text2); }
+.sim-preview { width:100%; height:40px; border-radius:4px; margin:6px 0; }
+.suggest-item { background:var(--surface); border-radius:8px; padding:12px; margin-bottom:8px; }
+.suggest-original { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.suggest-arrow { color:var(--text2); font-size:16px; }
+.suggest-new { display:flex; align-items:center; gap:8px; }
+.suggest-color-box { display:flex; align-items:center; gap:6px; padding:6px 10px; border-radius:6px; flex:1; }
+.suggest-color-box .hex { font-family:monospace; font-size:12px; }
+.suggest-color-box .ratio { font-size:10px; font-weight:600; }
+.brand-section { margin-top:16px; }
+.brand-colors { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.brand-chip { display:flex; align-items:center; gap:4px; background:var(--surface); padding:4px 8px; border-radius:6px; font-size:11px; cursor:pointer; }
+.brand-chip .swatch { width:14px; height:14px; border-radius:3px; border:1px solid var(--border); }
+.brand-chip .remove { margin-left:4px; color:var(--red); font-weight:700; }
+.ignore-section { margin-top:16px; }
+.ignore-item { display:flex; align-items:center; justify-content:space-between; background:var(--surface); padding:8px 10px; border-radius:6px; margin-bottom:4px; font-size:11px; }
+.export-btns { display:flex; gap:8px; margin-top:12px; }
+.export-btns .btn { flex:1; justify-content:center; }
+.loading { display:flex; align-items:center; justify-content:center; padding:40px; }
+.loading::after { content:''; width:24px; height:24px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.filter-bar { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+.filter-chip { padding:4px 10px; border-radius:20px; font-size:11px; cursor:pointer; border:1px solid var(--border); color:var(--text2); transition:all .15s; }
+.filter-chip.active { border-color:var(--accent); color:var(--accent); background:rgba(59,130,246,.1); }
+.restore-bar { background:rgba(59,130,246,.1); border:1px solid rgba(59,130,246,.3); border-radius:8px; padding:8px 12px; margin-bottom:12px; display:flex; align-items:center; gap:8px; font-size:11px; }
+.restore-bar .btn { padding:4px 10px; font-size:10px; }
+</style>
+</head>
+<body>
+<div class="tabs">
+  <div class="tab active" data-panel="scan">扫描</div>
+  <div class="tab" data-panel="pick">拾取</div>
+  <div class="tab" data-panel="report">报告</div>
+  <div class="tab" data-panel="simulate">模拟</div>
+  <div class="tab" data-panel="suggest">建议</div>
+</div>
+
+<div class="panel active" id="panel-scan">
+  <div class="scan-header">
+    <button class="btn btn-primary" id="btn-scan">🔍 一键扫描</button>
+    <button class="btn btn-outline" id="btn-clear" title="清除高亮">✕</button>
+  </div>
+  <div id="restore-bar" class="restore-bar" style="display:none">
+    <span>📋 检测到上次扫描结果</span>
+    <button class="btn btn-primary btn-sm" id="btn-restore">加载</button>
+  </div>
+  <div id="scan-stats" style="display:none">
+    <div class="stat-row">
+      <div class="stat-card"><div class="num" id="stat-total">0</div><div class="label">文本元素</div></div>
+      <div class="stat-card fail"><div class="num" id="stat-fail">0</div><div class="label">不达标</div></div>
+      <div class="stat-card aa"><div class="num" id="stat-aa">0</div><div class="label">AA</div></div>
+      <div class="stat-card aaa"><div class="num" id="stat-aaa">0</div><div class="label">AAA</div></div>
+    </div>
+  </div>
+  <div id="scan-results"></div>
+  <div id="scan-empty" class="empty-state">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+    <p>点击「一键扫描」检查页面颜色对比度</p>
+  </div>
+</div>
+
+<div class="panel" id="panel-pick">
+  <h3>元素拾取</h3>
+  <p style="color:var(--text2);font-size:12px;margin-bottom:12px;">点击下方按钮后，在页面上点击任意元素即可检查其颜色对比度</p>
+  <button class="btn btn-primary" id="btn-pick" style="width:100%;justify-content:center;">🎯 开始拾取</button>
+  <div id="pick-result" style="display:none"></div>
+  <div id="pick-empty" class="empty-state">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg>
+    <p>选取页面上的按钮、文字或区域</p>
+  </div>
+</div>
+
+<div class="panel" id="panel-report">
+  <h3>对比报告</h3>
+  <div id="report-content">
+    <div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <p>请先执行页面扫描</p>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-simulate">
+  <h3>色盲模拟</h3>
+  <p style="color:var(--text2);font-size:12px;margin-bottom:12px;">选择色盲类型预览页面效果</p>
+  <div class="sim-grid" id="sim-grid"></div>
+  <button class="btn btn-outline" id="btn-sim-reset" style="width:100%;justify-content:center;margin-top:12px;">↩ 恢复正常视图</button>
+</div>
+
+<div class="panel" id="panel-suggest">
+  <h3>修复建议</h3>
+  <div id="suggest-content"></div>
+  <div class="brand-section">
+    <h3>品牌色收藏</h3>
+    <div style="display:flex;gap:6px;margin-top:8px;">
+      <input type="text" id="brand-input" placeholder="输入色值如 #3b82f6" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none;" />
+      <button class="btn btn-primary btn-sm" id="btn-add-brand">添加</button>
+    </div>
+    <div class="brand-colors" id="brand-colors"></div>
+  </div>
+  <div class="ignore-section">
+    <h3>忽略规则</h3>
+    <div style="display:flex;gap:6px;margin-top:8px;">
+      <select id="ignore-type" style="padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none;">
+        <option value="color">颜色对</option>
+        <option value="selector">选择器</option>
+      </select>
+      <input type="text" id="ignore-value" placeholder="如 #000/#fff 或 .nav" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none;" />
+      <button class="btn btn-outline btn-sm" id="btn-add-ignore">添加</button>
+    </div>
+    <div id="ignore-list"></div>
+  </div>
+  <div class="export-btns">
+    <button class="btn btn-outline" id="btn-export-json">📄 导出 JSON</button>
+    <button class="btn btn-outline" id="btn-export-csv">📊 导出 CSV</button>
+  </div>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
