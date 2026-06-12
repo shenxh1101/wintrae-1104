@@ -93,6 +93,25 @@ h3 { font-size:14px; font-weight:600; margin-bottom:10px; color:var(--text); }
 .restore-bar { background:rgba(59,130,246,.1); border:1px solid rgba(59,130,246,.3); border-radius:8px; padding:8px 12px; margin-bottom:12px; display:flex; align-items:center; gap:8px; font-size:11px; }
 .restore-bar .btn { padding:4px 10px; font-size:10px; }
 .result-thumb { width:100%; border-radius:4px; margin-top:6px; border:1px solid var(--border); image-rendering:-webkit-optimize-contrast; }
+.history-select { width:100%; padding:6px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:12px; margin-bottom:8px; outline:none; }
+.diff-row { display:grid; grid-template-columns:24px 1fr 1fr; gap:8px; align-items:center; background:var(--surface); padding:8px; border-radius:6px; margin-bottom:4px; font-size:11px; }
+.diff-added { border-left:3px solid #22c55e; }
+.diff-removed { border-left:3px solid #ef4444; }
+.diff-improved { border-left:3px solid #3b82f6; }
+.diff-regressed { border-left:3px solid #f97316; }
+.diff-unchanged { border-left:3px solid #64748b; }
+.diff-badge { text-align:center; font-size:16px; }
+.diff-old { font-size:10px; color:var(--text2); text-decoration:line-through; }
+.diff-new { font-size:10px; }
+.section-title { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.section-title h3 { margin:0; }
+.ignore-form-grid { display:grid; grid-template-columns:1fr; gap:6px; margin-top:8px; }
+.ignore-input { padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:12px; outline:none; }
+.ignore-note { font-size:10px; color:var(--accent); font-style:italic; }
+.ignored-item { background:var(--surface); padding:8px; border-radius:6px; margin-bottom:6px; border-left:3px solid #64748b; }
+.ignored-reason { font-size:11px; color:var(--text2); margin-top:2px; }
+.export-row { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+.export-row .btn { flex:1 1 calc(50% - 4px); justify-content:center; min-width:100px; }
 </style>
 </head>
 <body>
@@ -140,7 +159,14 @@ h3 { font-size:14px; font-weight:600; margin-bottom:10px; color:var(--text); }
 </div>
 
 <div class="panel" id="panel-report">
-  <h3>对比报告</h3>
+  <div class="section-title">
+    <h3>对比报告</h3>
+  </div>
+  <div id="history-compare" style="margin-bottom:12px;display:none">
+    <select class="history-select" id="history-a"></select>
+    <select class="history-select" id="history-b"></select>
+    <button class="btn btn-primary btn-sm" id="btn-do-compare" style="width:100%;margin-bottom:8px;">对比两次扫描</button>
+  </div>
   <div id="report-content">
     <div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -169,19 +195,22 @@ h3 { font-size:14px; font-weight:600; margin-bottom:10px; color:var(--text); }
   </div>
   <div class="ignore-section">
     <h3>忽略规则</h3>
-    <div style="display:flex;gap:6px;margin-top:8px;">
-      <select id="ignore-type" style="padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none;">
-        <option value="color">颜色对</option>
-        <option value="selector">选择器</option>
+    <div class="ignore-form-grid">
+      <select id="ignore-type" class="ignore-input">
+        <option value="color">颜色对 (如 #000/#fff)</option>
+        <option value="selector">CSS 选择器 (如 .nav)</option>
       </select>
-      <input type="text" id="ignore-value" placeholder="如 #000/#fff 或 .nav" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none;" />
-      <button class="btn btn-outline btn-sm" id="btn-add-ignore">添加</button>
+      <input type="text" id="ignore-value" class="ignore-input" placeholder="规则值" />
+      <input type="text" id="ignore-scope" class="ignore-input" placeholder="适用范围（可选，如全站/本页/登录页）" />
+      <input type="text" id="ignore-note" class="ignore-input" placeholder="备注（可选，如设计稿要求的品牌色）" />
+      <button class="btn btn-outline btn-sm" id="btn-add-ignore" style="margin-top:4px;">➕ 添加忽略规则</button>
     </div>
-    <div id="ignore-list"></div>
+    <div id="ignore-list" style="margin-top:8px;"></div>
   </div>
-  <div class="export-btns">
-    <button class="btn btn-outline" id="btn-export-json">📄 导出 JSON</button>
-    <button class="btn btn-outline" id="btn-export-csv">📊 导出 CSV</button>
+  <div class="export-row">
+    <button class="btn btn-outline" id="btn-export-html">🌐 HTML 报告</button>
+    <button class="btn btn-outline" id="btn-export-json">📄 JSON</button>
+    <button class="btn btn-outline" id="btn-export-csv">📊 CSV</button>
   </div>
 </div>
 

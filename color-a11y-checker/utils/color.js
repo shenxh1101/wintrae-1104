@@ -95,15 +95,16 @@ const ColorUtils = (() => {
 
     const ancestors = [];
     let cur = el;
-    while (cur && cur !== document.documentElement) {
+    while (cur) {
       ancestors.unshift(cur);
+      if (cur === document.documentElement) break;
       cur = cur.parentElement;
     }
 
     let bgColor = { r: 255, g: 255, b: 255 };
-    const bodyBg = parseRgba(getComputedStyle(document.body).backgroundColor);
-    if (bodyBg && bodyBg.a > 0) {
-      bgColor = blendColors(bodyBg, bgColor, bodyBg.a);
+    const rootBg = parseRgba(getComputedStyle(document.documentElement).backgroundColor);
+    if (rootBg && rootBg.a > 0) {
+      bgColor = blendColors(rootBg, bgColor, rootBg.a);
     }
 
     for (let i = 0; i < ancestors.length; i++) {

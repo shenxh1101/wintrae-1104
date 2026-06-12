@@ -48,11 +48,16 @@
   }
 
   function isIgnored(fgHex, bgHex, selector) {
-    return ignoreRules.some(rule => {
-      if (rule.type === 'color' && rule.fg === fgHex && rule.bg === bgHex) return true;
-      if (rule.type === 'selector' && selector && selector.includes(rule.value)) return true;
-      return false;
-    });
+    return !!findIgnoreRule(fgHex, bgHex, selector);
+  }
+
+  function findIgnoreRule(fgHex, bgHex, selector) {
+    for (let i = 0; i < ignoreRules.length; i++) {
+      const rule = ignoreRules[i];
+      if (rule.type === 'color' && rule.fg === fgHex && rule.bg === bgHex) return rule;
+      if (rule.type === 'selector' && selector && selector.includes(rule.value)) return rule;
+    }
+    return null;
   }
 
   function getSelector(el) {
@@ -72,32 +77,162 @@
     return path.slice(0, 4).join(' > ');
   }
 
-  function generateThumbnail(item) {
+  function renderElementToCanvas(el) {
     try {
+      const style = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      let w = Math.max(40, Math.min(rect.width, 360));
+      let h = Math.max(28, Math.min(rect.height, 120));
+      const scale = w / rect.width;
       const canvas = document.createElement('canvas');
-      const w = 180, h = 48;
       canvas.width = w * 2;
       canvas.height = h * 2;
       const ctx = canvas.getContext('2d');
       ctx.scale(2, 2);
-      ctx.fillStyle = item.bg;
+
+      const colors = ColorUtils.getElementColors(el);
+      const { size, bold } = ColorUtils.getFontSize(el);
+      const ratio = ColorUtils.contrastRatio(colors.fg, colors.bg);
+      const level = ColorUtils.wcagLevel(ratio, size, bold);
+      const fgHex = ColorUtils.rgbToHex(colors.fg.r, colors.fg.g, colors.fg.b);
+      const bgHex = ColorUtils.rgbToHex(colors.bg.r, colors.bg.g, colors.bg.b);
+      const pass = level.pass;
+
+      ctx.fillStyle = bgHex;
       ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = item.fg;
-      const fontSize = Math.min(item.fontSize, 18);
-      ctx.font = `${item.bold ? 'bold ' : ''}${fontSize}px system-ui, sans-serif`;
-      const text = item.text.slice(0, 18);
-      ctx.fillText(text, 6, fontSize + 4);
-      ctx.strokeStyle = item.pass ? '#22c55e' : '#ef4444';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(1, 1, w - 2, h - 2);
-      const labelColor = item.pass ? '#22c55e' : '#ef4444';
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
-      const labelText = `${item.ratio}:1 ${item.level}`;
-      ctx.font = 'bold 10px system-ui';
-      const tw = ctx.measureText(labelText).width;
-      ctx.fillRect(w - tw - 12, h - 16, tw + 8, 14);
-      ctx.fillStyle = labelColor;
-      ctx.fillText(labelText, w - tw - 8, h - 5);
+
+      const borderRadius = Math.min(parseFloat(style.borderRadius || 0), h / 2) * scale;
+      if (borderRadius > 0) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-in';
+        roundRect(ctx, 0, 0, w, h, borderRadius);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      const borderWidth = Math.min(parseFloat(style.borderTopWidth || 0), 4);
+      if (borderWidth > 0) {
+        ctx.strokeStyle = style.borderTopColor;
+        ctx.lineWidth = borderWidth;
+        roundRect(ctx, borderWidth / 2, borderWidth / 2, w - borderWidth, h - borderWidth, Math.max(0, borderRadius - borderWidth / 2));
+        ctx.stroke();
+      }
+
+      const padL = Math.min(parseFloat(style.paddingLeft || 0), w * 0.25) * scale;
+      const padT = Math.min(parseFloat(style.paddingTop || 0), h * 0.25) * scale;
+
+      ctx.fillStyle = fgHex;
+      const textContent = (el.textContent || '').trim();
+      const tag = el.tagName.toLowerCase();
+      const fontSize = Math.max(10, Math.min(22, size * scale));
+      const weight = bold ? 'bold' : (parseInt(style.fontWeight) >= 600 ? '600' : 'normal');
+      const family = style.fontFamily.split(',')[0].replace(/"/g, '');
+      ctx.font = `${weight} ${fontSize}px ${family}, system-ui, sans-serif`;
+      ctx.textBaseline = 'top';
+
+      let displayText;
+      if (tag === 'button') {
+        displayText = textContent.slice(0, 16);
+      } else if (tag === 'a') {
+        displayText = textContent.slice(0, 20);
+      } else if (tag === 'input' || tag === 'textarea') {
+        displayText = (el.value || textContent).slice(0, 16) || '[input]';
+      } else if (tag === 'img') {
+        displayText = (el.alt || '[image]').slice(0, 20);
+      } else if (tag === 'nav' || tag === 'header' || tag === 'footer') {
+        displayText = '[' + tag + '] ' + textContent.slice(0, 12);
+      } else if (tag === 'table' || tag === 'tr' || tag === 'td' || tag === 'th') {
+        const allText = textContent.replace(/\s+/g, ' ');
+        displayText = '[table] ' + allText.slice(0, 14);
+      } else {
+        displayText = textContent.slice(0, 24);
+      }
+      if (!displayText) displayText = '[...]';
+
+      const x = padL + 2;
+      const y = Math.min(h / 2 - fontSize / 2, padT + 2);
+      const maxWidth = w - x - 6;
+      let textToDraw = displayText;
+      if (ctx.measureText(textToDraw).width > maxWidth) {
+        while (textToDraw.length > 1 && ctx.measureText(textToDraw + '…').width > maxWidth) {
+          textToDraw = textToDraw.slice(0, -1);
+        }
+        textToDraw += '…';
+      }
+      ctx.fillText(textToDraw, x, y);
+
+      const label = `${Math.round(ratio*100)/100}:1 ${level.level}`;
+      const labelFont = 11;
+      ctx.font = `bold ${labelFont}px system-ui, sans-serif`;
+      const labelPad = 5;
+      const labelW = ctx.measureText(label).width + labelPad * 2;
+      const labelH = labelFont + 6;
+      const lx = w - labelW - 4;
+      const ly = 4;
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      roundRect(ctx, lx, ly, labelW, labelH, 3);
+      ctx.fill();
+      ctx.fillStyle = pass ? '#22c55e' : '#ef4444';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, lx + labelPad, ly + labelH / 2);
+
+      return {
+        canvas,
+        data: {
+          text: textContent.slice(0, 80),
+          fg: fgHex, bg: bgHex, ratio: Math.round(ratio*100)/100,
+          level: level.level, pass: level.pass, fontSize: size, bold
+        }
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    r = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function generateThumbnail(item, el) {
+    try {
+      let canvas;
+      if (el) {
+        const rendered = renderElementToCanvas(el);
+        if (rendered) canvas = rendered.canvas;
+      }
+      if (!canvas) {
+        canvas = document.createElement('canvas');
+        const w = 180, h = 48;
+        canvas.width = w * 2;
+        canvas.height = h * 2;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(2, 2);
+        ctx.fillStyle = item.bg;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = item.fg;
+        const fontSize = Math.min(item.fontSize, 18);
+        ctx.font = `${item.bold ? 'bold ' : ''}${fontSize}px system-ui, sans-serif`;
+        const text = (item.text || '').slice(0, 18);
+        ctx.fillText(text, 6, fontSize + 4);
+        ctx.strokeStyle = item.pass ? '#22c55e' : '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, w - 2, h - 2);
+        const labelColor = item.pass ? '#22c55e' : '#ef4444';
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        const labelText = `${item.ratio}:1 ${item.level}`;
+        ctx.font = 'bold 10px system-ui';
+        const tw = ctx.measureText(labelText).width;
+        ctx.fillRect(w - tw - 12, h - 16, tw + 8, 14);
+        ctx.fillStyle = labelColor;
+        ctx.fillText(labelText, w - tw - 8, h - 5);
+      }
       return canvas.toDataURL('image/png');
     } catch (e) {
       return null;
@@ -107,6 +242,8 @@
   function scanPage() {
     const elements = getVisibleTextElements();
     scanResults = [];
+    const ignoredItems = [];
+    const elementMap = [];
     elements.forEach(el => {
       try {
         const colors = ColorUtils.getElementColors(el);
@@ -116,8 +253,8 @@
         const fgHex = ColorUtils.rgbToHex(colors.fg.r, colors.fg.g, colors.fg.b);
         const bgHex = ColorUtils.rgbToHex(colors.bg.r, colors.bg.g, colors.bg.b);
         const selector = getSelector(el);
-        if (isIgnored(fgHex, bgHex, selector)) return;
-        scanResults.push({
+        const rect = el.getBoundingClientRect();
+        const item = {
           text: el.textContent.trim().slice(0, 80),
           selector,
           fg: fgHex,
@@ -130,17 +267,26 @@
           fontSize: size,
           bold,
           rect: {
-            top: el.getBoundingClientRect().top + window.scrollY,
-            left: el.getBoundingClientRect().left + window.scrollX,
-            width: el.getBoundingClientRect().width,
-            height: el.getBoundingClientRect().height
+            top: rect.top + window.scrollY,
+            left: rect.left + window.scrollX,
+            width: rect.width,
+            height: rect.height
           }
-        });
+        };
+        const matchedRule = findIgnoreRule(fgHex, bgHex, selector);
+        if (matchedRule) {
+          ignoredItems.push({ ...item, ignoredBecause: matchedRule });
+        } else {
+          scanResults.push(item);
+          elementMap.push(el);
+        }
       } catch(e) {}
     });
-    scanResults.forEach(item => { item.thumbnail = generateThumbnail(item); });
+    scanResults.forEach((item, idx) => {
+      item.thumbnail = generateThumbnail(item, elementMap[idx]);
+    });
     scanResults.sort((a, b) => a.ratio - b.ratio);
-    return scanResults;
+    return { results: scanResults, ignored: ignoredItems };
   }
 
   function scanElement(el) {
@@ -151,6 +297,7 @@
     const level = ColorUtils.wcagLevel(ratio, size, bold);
     const fgHex = ColorUtils.rgbToHex(colors.fg.r, colors.fg.g, colors.fg.b);
     const bgHex = ColorUtils.rgbToHex(colors.bg.r, colors.bg.g, colors.bg.b);
+    const rect = el.getBoundingClientRect();
     const result = {
       text: el.textContent.trim().slice(0, 80),
       selector: getSelector(el),
@@ -164,13 +311,13 @@
       fontSize: size,
       bold,
       rect: {
-        top: el.getBoundingClientRect().top + window.scrollY,
-        left: el.getBoundingClientRect().left + window.scrollX,
-        width: el.getBoundingClientRect().width,
-        height: el.getBoundingClientRect().height
+        top: rect.top + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+        height: rect.height
       }
     };
-    result.thumbnail = generateThumbnail(result);
+    result.thumbnail = generateThumbnail(result, el);
     return result;
   }
 
@@ -297,15 +444,39 @@
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch(msg.type) {
       case 'scanPage': {
-        const results = scanPage();
+        const { results, ignored } = scanPage();
         const summary = {
           total: results.length,
           fail: results.filter(r => r.level === 'Fail').length,
           aa: results.filter(r => r.level === 'AA').length,
-          aaa: results.filter(r => r.level === 'AAA').length
+          aaa: results.filter(r => r.level === 'AAA').length,
+          ignored: ignored.length
         };
-        chrome.storage.local.set({ lastResults: results, lastSummary: summary, lastUrl: location.href, lastScanTime: Date.now() });
-        sendResponse({ results, summary });
+        const scanData = {
+          id: 'scan_' + Date.now(),
+          timestamp: Date.now(),
+          url: location.href,
+          summary,
+          results,
+          ignored
+        };
+        chrome.storage.local.get(['scanHistory'], (storage) => {
+          const history = storage.scanHistory || {};
+          const urlKey = location.href;
+          if (!history[urlKey]) history[urlKey] = [];
+          history[urlKey].unshift(scanData);
+          if (history[urlKey].length > 15) history[urlKey] = history[urlKey].slice(0, 15);
+          chrome.storage.local.set({
+            lastResults: results,
+            lastSummary: summary,
+            lastIgnored: ignored,
+            lastUrl: location.href,
+            lastScanTime: scanData.timestamp,
+            lastScanId: scanData.id,
+            scanHistory: history
+          });
+        });
+        sendResponse({ results, summary, ignored });
         break;
       }
       case 'scanElement': {
