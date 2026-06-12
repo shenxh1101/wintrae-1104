@@ -91,6 +91,9 @@
 
   function renderResultItem(item) {
     const levelClass = item.level === 'AAA' ? 'aaa' : item.level === 'AA' ? 'aa' : 'fail';
+    const thumbHtml = (item.level === 'Fail' && item.thumbnail)
+      ? `<img class="result-thumb" src="${item.thumbnail}" alt="对比度标注截图" />`
+      : '';
     return `
       <div class="result-item level-${levelClass}" data-selector="${escapeAttr(item.selector)}">
         <div class="result-top">
@@ -104,6 +107,7 @@
           <span>${item.fg} / ${item.bg}</span>
           <span>${item.fontSize}px${item.bold ? ' 粗体' : ''}</span>
         </div>
+        ${thumbHtml}
       </div>
     `;
   }
@@ -151,6 +155,14 @@
       stopPicker();
     }
   });
+
+  function loadPickerResult() {
+    chrome.storage.local.get(['lastPickerResult'], (data) => {
+      if (data.lastPickerResult) {
+        renderPickedResult(data.lastPickerResult);
+      }
+    });
+  }
 
   function renderPickedResult(data) {
     if (!data) return;
@@ -250,7 +262,11 @@
       </div>
       <h3 style="margin-top:12px;">低可读文本列表</h3>
       ${failItems.length === 0 ? '<p style="color:var(--green);font-size:12px;padding:8px;">✅ 所有文本均达标！</p>' :
-        failItems.slice(0, 30).map(item => `
+        failItems.slice(0, 30).map(item => {
+          const thumbHtml = item.thumbnail
+            ? `<img class="result-thumb" src="${item.thumbnail}" alt="对比度标注截图" />`
+            : '';
+          return `
           <div class="result-item" data-selector="${escapeAttr(item.selector)}" style="margin-bottom:4px;padding:8px;">
             <div class="result-top">
               <div class="color-swatch" style="background:${item.fg}"></div>
@@ -259,8 +275,10 @@
               <span class="result-level fail">${item.level}</span>
             </div>
             <div class="result-text">${escapeHtml(item.text)}</div>
+            ${thumbHtml}
           </div>
-        `).join('')
+        `;
+        }).join('')
       }
       <div style="margin-top:12px;">
         <h3>分布概览</h3>
@@ -476,17 +494,40 @@
     $('#ignore-value').value = '';
   });
 
-  $('#btn-export-json').addEventListener('click', () => {
+  function getScanUrl() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['lastUrl'], (data) => {
+        if (data.lastUrl) { resolve(data.lastUrl); return; }
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          resolve(tabs[0]?.url || '');
+        });
+      });
+    });
+  }
+
+  function getScanTime() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['lastScanTime'], (data) => {
+        resolve(data.lastScanTime ? new Date(data.lastScanTime).toISOString() : new Date().toISOString());
+      });
+    });
+  }
+
+  $('#btn-export-json').addEventListener('click', async () => {
     if (!scanResults.length) return;
-    const data = JSON.stringify({ summary: scanSummary, results: scanResults, url: location.href, exportedAt: new Date().toISOString() }, null, 2);
+    const url = await getScanUrl();
+    const scanTime = await getScanTime();
+    const data = JSON.stringify({ summary: scanSummary, results: scanResults, url, scanTime, exportedAt: new Date().toISOString() }, null, 2);
     downloadFile(data, 'a11y-report.json', 'application/json');
   });
 
-  $('#btn-export-csv').addEventListener('click', () => {
+  $('#btn-export-csv').addEventListener('click', async () => {
     if (!scanResults.length) return;
-    const header = '文本,选择器,前景色,背景色,对比度,等级,字号,粗体\n';
+    const url = await getScanUrl();
+    const scanTime = await getScanTime();
+    const header = '文本,选择器,前景色,背景色,对比度,等级,字号,粗体,网页地址,扫描时间,截图\n';
     const rows = scanResults.map(r =>
-      `"${r.text.replace(/"/g,'""')}","${r.selector}","${r.fg}","${r.bg}",${r.ratio},${r.level},${r.fontSize},${r.bold}`
+      `"${r.text.replace(/"/g,'""')}","${r.selector}","${r.fg}","${r.bg}",${r.ratio},${r.level},${r.fontSize},${r.bold},"${url}","${scanTime}","${r.thumbnail || ''}"`
     ).join('\n');
     downloadFile('\uFEFF' + header + rows, 'a11y-report.csv', 'text/csv;charset=utf-8');
   });
@@ -536,5 +577,6 @@
 
   loadBrandColors();
   loadIgnoreRules();
+  loadPickerResult();
   checkRestorable();
 })();

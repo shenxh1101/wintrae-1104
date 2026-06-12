@@ -72,6 +72,38 @@
     return path.slice(0, 4).join(' > ');
   }
 
+  function generateThumbnail(item) {
+    try {
+      const canvas = document.createElement('canvas');
+      const w = 180, h = 48;
+      canvas.width = w * 2;
+      canvas.height = h * 2;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(2, 2);
+      ctx.fillStyle = item.bg;
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = item.fg;
+      const fontSize = Math.min(item.fontSize, 18);
+      ctx.font = `${item.bold ? 'bold ' : ''}${fontSize}px system-ui, sans-serif`;
+      const text = item.text.slice(0, 18);
+      ctx.fillText(text, 6, fontSize + 4);
+      ctx.strokeStyle = item.pass ? '#22c55e' : '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, w - 2, h - 2);
+      const labelColor = item.pass ? '#22c55e' : '#ef4444';
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      const labelText = `${item.ratio}:1 ${item.level}`;
+      ctx.font = 'bold 10px system-ui';
+      const tw = ctx.measureText(labelText).width;
+      ctx.fillRect(w - tw - 12, h - 16, tw + 8, 14);
+      ctx.fillStyle = labelColor;
+      ctx.fillText(labelText, w - tw - 8, h - 5);
+      return canvas.toDataURL('image/png');
+    } catch (e) {
+      return null;
+    }
+  }
+
   function scanPage() {
     const elements = getVisibleTextElements();
     scanResults = [];
@@ -106,6 +138,7 @@
         });
       } catch(e) {}
     });
+    scanResults.forEach(item => { item.thumbnail = generateThumbnail(item); });
     scanResults.sort((a, b) => a.ratio - b.ratio);
     return scanResults;
   }
@@ -118,7 +151,7 @@
     const level = ColorUtils.wcagLevel(ratio, size, bold);
     const fgHex = ColorUtils.rgbToHex(colors.fg.r, colors.fg.g, colors.fg.b);
     const bgHex = ColorUtils.rgbToHex(colors.bg.r, colors.bg.g, colors.bg.b);
-    return {
+    const result = {
       text: el.textContent.trim().slice(0, 80),
       selector: getSelector(el),
       fg: fgHex,
@@ -137,6 +170,8 @@
         height: el.getBoundingClientRect().height
       }
     };
+    result.thumbnail = generateThumbnail(result);
+    return result;
   }
 
   function highlightElements(items) {
@@ -213,6 +248,7 @@
     const result = scanElement(el);
     stopPicker();
     if (result) {
+      chrome.storage.local.set({ lastPickerResult: result });
       chrome.runtime.sendMessage({ type: 'pickerResult', data: result });
     }
   }

@@ -1,9 +1,15 @@
 const ColorUtils = (() => {
-  function parseRgb(str) {
+  function parseRgba(str) {
     if (!str) return null;
-    const m = str.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-    if (m) return { r: +m[1], g: +m[2], b: +m[3] };
-    return null;
+    const m = str.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\)/);
+    if (!m) return null;
+    return { r: +m[1], g: +m[2], b: +m[3], a: m[4] !== undefined ? parseFloat(m[4]) : 1 };
+  }
+
+  function parseRgb(str) {
+    const c = parseRgba(str);
+    if (!c) return null;
+    return { r: c.r, g: c.g, b: c.b };
   }
 
   function hexToRgb(hex) {
@@ -85,25 +91,28 @@ const ColorUtils = (() => {
   function getElementColors(el) {
     const style = getComputedStyle(el);
     let fgColor = parseRgb(style.color);
-    let bgColor = null;
-    let current = el;
-    while (current && current !== document.body && current !== document.documentElement) {
-      const bg = parseRgb(getComputedStyle(current).backgroundColor);
-      if (bg && (bg.r !== 0 || bg.g !== 0 || bg.b !== 0 || getComputedStyle(current).opacity !== '0')) {
-        const opacity = parseFloat(getComputedStyle(current).opacity) || 1;
-        if (opacity < 1 && bgColor) {
-          bgColor = blendColors(bg, bgColor, opacity);
-        } else {
-          bgColor = bg;
-        }
-        break;
-      }
-      current = current.parentElement;
-    }
-    if (!bgColor) {
-      bgColor = parseRgb(getComputedStyle(document.body).backgroundColor) || { r: 255, g: 255, b: 255 };
-    }
     if (!fgColor) fgColor = { r: 0, g: 0, b: 0 };
+
+    const ancestors = [];
+    let cur = el;
+    while (cur && cur !== document.documentElement) {
+      ancestors.unshift(cur);
+      cur = cur.parentElement;
+    }
+
+    let bgColor = { r: 255, g: 255, b: 255 };
+    const bodyBg = parseRgba(getComputedStyle(document.body).backgroundColor);
+    if (bodyBg && bodyBg.a > 0) {
+      bgColor = blendColors(bodyBg, bgColor, bodyBg.a);
+    }
+
+    for (let i = 0; i < ancestors.length; i++) {
+      const node = ancestors[i];
+      const bg = parseRgba(getComputedStyle(node).backgroundColor);
+      if (!bg || bg.a === 0) continue;
+      bgColor = blendColors(bg, bgColor, bg.a);
+    }
+
     return { fg: fgColor, bg: bgColor };
   }
 
@@ -149,7 +158,7 @@ const ColorUtils = (() => {
   }
 
   return {
-    parseRgb, hexToRgb, rgbToHex, rgbToHsl, hslToRgb,
+    parseRgb, parseRgba, hexToRgb, rgbToHex, rgbToHsl, hslToRgb,
     relativeLuminance, contrastRatio, wcagLevel,
     getElementColors, blendColors, suggestColor, getFontSize
   };
