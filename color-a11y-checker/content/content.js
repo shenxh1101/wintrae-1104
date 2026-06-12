@@ -57,12 +57,28 @@
   }
 
   function ruleScopeMatches(rule, url) {
-    if (!rule || !rule.scope) return true;
-    const s = String(rule.scope).trim();
+    if (!rule) return true;
+    const s = String(rule.scope || '').trim();
+    const cur = url || location.href;
+
+    if (rule.scopeUrl) {
+      try {
+        const target = new URL(rule.scopeUrl);
+        const u = new URL(cur);
+        return u.origin === target.origin && (
+          u.pathname === target.pathname ||
+          u.pathname.startsWith(target.pathname.replace(/\/$/, '') + '/')
+        );
+      } catch(e) {}
+    }
+
     if (!s || s === '全站' || s === '全局' || /^(all|site|global|全站)$/i.test(s)) return true;
-    if (s === '本页' || /^(this|page|本页)$/i.test(s)) return true;
+    if (s === '本页' || /^(this|page|本页)$/i.test(s)) {
+      if (rule.scopeUrl) return ruleScopeMatches({ scopeUrl: rule.scopeUrl }, cur);
+      return true;
+    }
     try {
-      const u = new URL(url || location.href);
+      const u = new URL(cur);
       if (s.startsWith('http://') || s.startsWith('https://')) {
         try {
           const target = new URL(s);
@@ -80,7 +96,7 @@
           .replace(/\*/g, '.*')
           .replace(/\//g, '\\/');
         const re = new RegExp('^' + pattern + '$', 'i');
-        return re.test(url || location.href);
+        return re.test(cur);
       }
       if (u.hostname.includes(s) || (u.pathname + u.search).includes(s)) return true;
     } catch(e) {}

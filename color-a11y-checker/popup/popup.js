@@ -8,6 +8,7 @@
   let brandColors = [];
   let ignoreRules = [];
   let currentCompare = null;
+  let currentReview = {};
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -53,6 +54,20 @@
     $('#stat-fail').textContent = scanSummary.fail || 0;
     $('#stat-aa').textContent = scanSummary.aa || 0;
     $('#stat-aaa').textContent = scanSummary.aaa || 0;
+    await loadReview();
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const url = tabs[0]?.url;
+      if (!url) return;
+      chrome.storage.local.get(['scanHistory'], (data) => {
+        const history = data.scanHistory || {};
+        const list = history[url] || [];
+        if (list.length > 0) {
+          list[0].review = JSON.parse(JSON.stringify(currentReview));
+          history[url] = list;
+          chrome.storage.local.set({ scanHistory: history });
+        }
+      });
+    });
     renderScanList();
   }
 
@@ -83,20 +98,91 @@
       chip.addEventListener('click', () => renderScanList(chip.dataset.filter));
     });
     resultsEl.querySelectorAll('.result-item').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('.review-inline')) return;
         sendToContent({ type: 'highlightSingle', selector: el.dataset.selector });
       });
       el.addEventListener('mouseenter', () => {
         sendToContent({ type: 'highlightSingle', selector: el.dataset.selector });
       });
     });
+    resultsEl.querySelectorAll('.review-status').forEach(sel => {
+      sel.addEventListener('change', (e) => {
+        setReviewFor(sel.dataset.selector, { status: sel.value });
+      });
+      sel.addEventListener('click', (e) => e.stopPropagation());
+    });
+    resultsEl.querySelectorAll('.review-comment').forEach(ta => {
+      ta.addEventListener('input', (e) => {
+        setReviewFor(ta.dataset.selector, { comment: ta.value });
+      });
+      ta.addEventListener('click', (e) => e.stopPropagation());
+    });
   }
+
+  function reviewKey(selector) {
+    return 'review_' + selector;
+  }
+
+  function loadReview() {
+    return new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tabUrl = tabs[0]?.url;
+        if (!tabUrl) { resolve({}); return; }
+        const key = 'reviewData_' + tabUrl;
+        chrome.storage.local.get([key], (data) => {
+          currentReview = data[key] || {};
+          resolve(currentReview);
+        });
+      });
+    });
+  }
+
+  function saveReview() {
+    return new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tabUrl = tabs[0]?.url;
+        if (!tabUrl) { resolve(); return; }
+        const key = 'reviewData_' + tabUrl;
+        chrome.storage.local.set({ [key]: currentReview }, () => resolve());
+      });
+    });
+  }
+
+  function getReviewFor(selector) {
+    if (!selector) return { status: 'pending', comment: '', author: '', updatedAt: null };
+    return currentReview[reviewKey(selector)] || { status: 'pending', comment: '', author: '', updatedAt: null };
+  }
+
+  function setReviewFor(selector, patch) {
+    if (!selector) return;
+    const key = reviewKey(selector);
+    const cur = currentReview[key] || { status: 'pending', comment: '', author: '', updatedAt: null };
+    currentReview[key] = { ...cur, ...patch, updatedAt: patch.updatedAt || new Date().toISOString() };
+    saveReview();
+  }
+
+  const REVIEW_STATUS_OPTS = [
+    ['pending', '待评审'],
+    ['approved', '已通过'],
+    ['rejected', '需修改'],
+    ['discussed', '已讨论']
+  ];
 
   function renderResultItem(item) {
     const levelClass = item.level === 'AAA' ? 'aaa' : item.level === 'AA' ? 'aa' : 'fail';
     const thumbHtml = (item.level === 'Fail' && item.thumbnail)
       ? `<img class="result-thumb" src="${item.thumbnail}" alt="对比度标注截图" />`
       : '';
+    const review = getReviewFor(item.selector);
+    const st = review.status || 'pending';
+    const comment = review.comment || '';
+    const statusChip = `<span class="st status-${st}" style="font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600;${
+      st==='approved' ? 'background:#f0fdf4;color:#16a34a;'
+      : st==='rejected' ? 'background:#fef2f2;color:#dc2626;'
+      : st==='discussed' ? 'background:#eff6ff;color:#2563eb;'
+      : 'background:#f1f5f9;color:#475569;'
+    }">${REVIEW_STATUS_OPTS.find(o=>o[0]===st)?.[1]||'待评审'}</span>`;
     return `
       <div class="result-item level-${levelClass}" data-selector="${escapeAttr(item.selector)}">
         <div class="result-top">
@@ -104,13 +190,22 @@
           <div class="color-swatch" style="background:${item.bg}"></div>
           <span class="result-ratio">${item.ratio}:1</span>
           <span class="result-level ${levelClass}">${item.level}</span>
+          ${statusChip}
         </div>
         <div class="result-text">${escapeHtml(item.text)}</div>
         <div class="result-meta">
           <span>${item.fg} / ${item.bg}</span>
           <span>${item.fontSize}px${item.bold ? ' 粗体' : ''}</span>
+          ${item.region ? `<span style="background:rgba(59,130,246,.1);color:var(--accent);font-size:10px;padding:1px 5px;border-radius:3px;">${escapeHtml(item.region)}</span>` : ''}
         </div>
         ${thumbHtml}
+        <div class="review-inline" style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);display:flex;flex-direction:column;gap:4px;">
+          <select class="review-status" data-selector="${escapeAttr(item.selector)}" style="padding:2px 6px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);">
+            ${REVIEW_STATUS_OPTS.map(o => `<option value="${o[0]}"${st===o[0]?' selected':''}>${o[1]}</option>`).join('')}
+          </select>
+          <textarea class="review-comment" data-selector="${escapeAttr(item.selector)}" placeholder="评审意见…" rows="2" style="padding:4px 6px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);resize:vertical;">${escapeHtml(comment)}</textarea>
+          ${review.updatedAt ? `<div style="font-size:10px;color:var(--text2);">🕒 ${new Date(review.updatedAt).toLocaleString('zh-CN')}${review.author ? ' · 👤 '+escapeHtml(review.author):''}</div>`:''}
+        </div>
       </div>
     `;
   }
@@ -385,7 +480,8 @@
   function renderCompareView() {
     if (!currentCompare) return;
     const { a, b } = currentCompare;
-    const diff = computeDiff(a.results, b.results);
+    const diff = computeDiff(a, b);
+    const reviewChanged = diff.reviewChanged || [];
     $('#report-content').innerHTML = `
       <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:8px 10px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
         <div>
@@ -399,9 +495,11 @@
         <div class="stat-card"><div class="num" style="color:#ef4444;">${diff.regressed.length}</div><div class="label">退化</div></div>
         <div class="stat-card"><div class="num" style="color:#3b82f6;">${diff.added.length}</div><div class="label">新增</div></div>
         <div class="stat-card"><div class="num" style="color:#64748b;">${diff.removed.length}</div><div class="label">移除</div></div>
+        ${reviewChanged.length ? `<div class="stat-card"><div class="num" style="color:#8b5cf6;">${reviewChanged.length}</div><div class="label">评审变动</div></div>` : ''}
       </div>
       ${renderDiffSection('改善项', diff.improved, 'diff-improved', '↑', '#22c55e', 'improved')}
       ${renderDiffSection('退化项', diff.regressed, 'diff-regressed', '↓', '#f97316', 'regressed')}
+      ${reviewChanged.length ? renderDiffSection('评审结论变化', reviewChanged, 'diff-discussed', '💬', '#8b5cf6', 'reviewChanged') : ''}
       ${renderDiffSection('新增元素', diff.added, 'diff-added', '＋', '#22c55e', 'added')}
       ${renderDiffSection('移除元素', diff.removed, 'diff-removed', '−', '#ef4444', 'removed')}
     `;
@@ -451,7 +549,29 @@
   function renderDiffDetail(d, cls, badge, color) {
     const oldItem = d._old;
     const newItem = d._new;
-    const colBlock = (item, label, side) => {
+    const oldReview = d._oldReview;
+    const newReview = d._newReview;
+
+    const statusLabel = (s) => {
+      if (s === 'approved') return { t: '✅ 已通过', c: '#16a34a', bg: '#f0fdf4' };
+      if (s === 'rejected') return { t: '❌ 需修改', c: '#dc2626', bg: '#fef2f2' };
+      if (s === 'discussed') return { t: '💬 已讨论', c: '#2563eb', bg: '#eff6ff' };
+      return { t: '⏳ 待评审', c: '#475569', bg: '#f1f5f9' };
+    };
+
+    const reviewBlock = (r, label) => {
+      if (!r || (!r.status && !r.comment)) return `<div style="font-size:11px;color:#94a3b8;padding:6px;background:#f8fafc;border-radius:4px;">${label}：无评审记录</div>`;
+      const sl = statusLabel(r.status || 'pending');
+      return `
+        <div style="background:${sl.bg};border-left:3px solid ${sl.c};padding:6px 8px;border-radius:4px;font-size:11px;">
+          <div style="font-weight:600;color:${sl.c};margin-bottom:2px;">${label}：${sl.t}</div>
+          ${r.comment ? `<div style="color:#334155;white-space:pre-wrap;word-break:break-word;margin-top:2px;">${escapeHtml(r.comment)}</div>` : ''}
+          ${r.author || r.updatedAt ? `<div style="color:#94a3b8;margin-top:3px;font-size:10px;">${r.author ? '👤 '+escapeHtml(r.author)+' · ':''}${r.updatedAt ? '🕒 '+new Date(r.updatedAt).toLocaleString('zh-CN'):''}</div>` : ''}
+        </div>
+      `;
+    };
+
+    const colBlock = (item, label, side, review) => {
       if (!item) return `<div style="flex:1;min-width:0;"><div style="font-size:11px;color:#64748b;margin-bottom:6px;">${label}</div><div style="background:#f8fafc;border-radius:6px;padding:10px;border:1px dashed #cbd5e1;text-align:center;color:#94a3b8;font-size:11px;">${side === 'A' ? '已不存在于当前版本' : '上一版本不存在此元素'}</div></div>`;
       return `
         <div style="flex:1;min-width:0;">
@@ -466,15 +586,16 @@
           ${item.suggestFg ? `<div style="font-size:11px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:4px;padding:4px 6px;margin:4px 0;"><span style="color:#16a34a;">💡 建议前景色 </span><span style="display:inline-flex;align-items:center;gap:3px;"><span class="color-swatch" style="background:${item.suggestFg};width:12px;height:12px;"></span><code style="font-size:10px;">${item.suggestFg}</code></span> <span style="color:#16a34a;">→ ${item.suggestRatio}:1</span></div>` : ''}
           <div style="font-size:10px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeAttr(item.text || '')}">${escapeHtml((item.text || '').slice(0, 40))}</div>
           ${item.region ? `<div style="margin-top:4px;font-size:10px;"><span style="background:rgba(59,130,246,.1);color:var(--accent);padding:1px 5px;border-radius:3px;">${escapeHtml(item.region)}</span></div>` : ''}
+          <div style="margin-top:6px;">${reviewBlock(review, '评审')}</div>
         </div>
       `;
     };
     return `
       <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin:-3px 0 6px 36px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
         <div style="display:flex;gap:10px;align-items:stretch;">
-          ${colBlock(oldItem, '👈 上一版本 (A)', 'A')}
+          ${colBlock(oldItem, '👈 上一版本 (A)', 'A', oldReview)}
           <div style="width:1px;background:#e2e8f0;flex-shrink:0;"></div>
-          ${colBlock(newItem, '👉 当前版本 (B)', 'B')}
+          ${colBlock(newItem, '👉 当前版本 (B)', 'B', newReview)}
         </div>
         ${newItem?.ignoredBecause || oldItem?.ignoredBecause ? `
         <div style="margin-top:8px;padding:6px 8px;background:rgba(100,116,139,.08);border-left:3px solid #64748b;border-radius:4px;font-size:11px;">
@@ -488,7 +609,12 @@
     `;
   }
 
-  function computeDiff(oldResults, newResults) {
+  function computeDiff(oldScan, newScan) {
+    const oldResults = (oldScan && oldScan.results) ? oldScan.results : oldScan;
+    const newResults = (newScan && newScan.results) ? newScan.results : newScan;
+    const oldReview = (oldScan && oldScan.review) || {};
+    const newReview = (newScan && newScan.review) || {};
+
     const aMap = new Map();
     oldResults.forEach(r => aMap.set(r.selector, r));
     const bMap = new Map();
@@ -497,12 +623,16 @@
     const regressed = [];
     const added = [];
     const removed = [];
+    const reviewChanged = [];
     const levelRank = { 'Fail': 0, 'AA': 1, 'AAA': 2 };
+
+    const rk = (sel) => 'review_' + sel;
+    const pickReview = (obj, sel) => obj ? (obj[rk(sel)] || {}) : {};
 
     oldResults.forEach(a => {
       const b = bMap.get(a.selector);
       if (!b) {
-        removed.push({ selector: a.selector, text: a.text, oldRatio: a.ratio, oldLevel: a.level, _old: a, _new: null });
+        removed.push({ selector: a.selector, text: a.text, oldRatio: a.ratio, oldLevel: a.level, _old: a, _new: null, _oldReview: pickReview(oldReview, a.selector), _newReview: null });
         return;
       }
       const rankDelta = levelRank[b.level] - levelRank[a.level];
@@ -511,7 +641,9 @@
         text: b.text || a.text,
         oldRatio: a.ratio, oldLevel: a.level,
         newRatio: b.ratio, newLevel: b.level,
-        _old: a, _new: b
+        _old: a, _new: b,
+        _oldReview: pickReview(oldReview, a.selector),
+        _newReview: pickReview(newReview, b.selector)
       });
       if (rankDelta > 0 || (b.ratio - a.ratio >= 0.5 && levelRank[b.level] >= levelRank[a.level])) {
         if (levelRank[b.level] > levelRank[a.level]) pushData(improved);
@@ -520,15 +652,42 @@
         if (levelRank[b.level] < levelRank[a.level]) pushData(regressed);
         else if (rankDelta === 0 && a.ratio - b.ratio >= 0.5) pushData(regressed);
       }
+
+      const oR = pickReview(oldReview, a.selector);
+      const nR = pickReview(newReview, b.selector);
+      if ((oR.status || 'pending') !== (nR.status || 'pending') ||
+          (oR.comment || '') !== (nR.comment || '')) {
+        reviewChanged.push({
+          selector: a.selector,
+          text: b.text || a.text,
+          oldRatio: a.ratio, oldLevel: a.level,
+          newRatio: b.ratio, newLevel: b.level,
+          oldStatus: oR.status || 'pending',
+          newStatus: nR.status || 'pending',
+          oldComment: oR.comment || '',
+          newComment: nR.comment || '',
+          _old: a, _new: b,
+          _oldReview: oR, _newReview: nR
+        });
+      }
     });
 
     newResults.forEach(b => {
       if (!aMap.has(b.selector)) {
-        added.push({ selector: b.selector, text: b.text, newRatio: b.ratio, newLevel: b.level, _old: null, _new: b });
+        added.push({ selector: b.selector, text: b.text, newRatio: b.ratio, newLevel: b.level, _old: null, _new: b, _oldReview: null, _newReview: pickReview(newReview, b.selector) });
+        const nR = pickReview(newReview, b.selector);
+        if (nR && (nR.status && nR.status !== 'pending' || nR.comment)) {
+          reviewChanged.push({
+            selector: b.selector, text: b.text, newRatio: b.ratio, newLevel: b.level,
+            oldStatus: null, newStatus: nR.status || 'pending',
+            oldComment: '', newComment: nR.comment || '',
+            _old: null, _new: b, _oldReview: null, _newReview: nR
+          });
+        }
       }
     });
 
-    return { improved, regressed, added, removed };
+    return { improved, regressed, added, removed, reviewChanged };
   }
 
   function initSimGrid() {
@@ -685,20 +844,44 @@
     });
   }
 
+  function scopeLabel(rule) {
+    if (!rule || !rule.scope) {
+      return { text: '全站', color: '#10b981', bg: 'rgba(16,185,129,.12)' };
+    }
+    const s = String(rule.scope).trim();
+    if (!s || /^(全站|全局|all|site|global)$/i.test(s)) {
+      return { text: '🌐 全站', color: '#10b981', bg: 'rgba(16,185,129,.12)' };
+    }
+    if (/^(本页|this|page)$/i.test(s) || rule.scopeUrl) {
+      return { text: '📍 本页', color: '#3b82f6', bg: 'rgba(59,130,246,.12)', desc: rule.scopeUrl || s };
+    }
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      try {
+        const u = new URL(s);
+        return { text: '🔗 指定页面', color: '#8b5cf6', bg: 'rgba(139,92,246,.12)', desc: u.pathname + u.search };
+      } catch(e) {}
+    }
+    return { text: '🎯 匹配 ' + s, color: '#f59e0b', bg: 'rgba(245,158,11,.12)' };
+  }
+
   function renderIgnoreList() {
     const container = $('#ignore-list');
-    container.innerHTML = ignoreRules.map((rule, i) => `
+    container.innerHTML = ignoreRules.map((rule, i) => {
+      const lb = scopeLabel(rule);
+      return `
       <div class="ignored-item" style="margin-bottom:6px;padding:8px;border-left:3px solid #64748b;">
-        <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             <strong style="font-size:11px;">${rule.type === 'color' ? '🎨 ' + rule.fg + '/' + rule.bg : '🔍 ' + rule.value}</strong>
-            ${rule.scope ? `<span style="background:rgba(59,130,246,.15);color:var(--accent);font-size:10px;padding:1px 6px;border-radius:3px;">${escapeHtml(rule.scope)}</span>` : ''}
+            <span style="background:${lb.bg};color:${lb.color};font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600;" title="${escapeAttr(lb.desc || lb.text)}">${lb.text}</span>
           </div>
           <button class="btn btn-sm btn-danger" data-index="${i}" style="padding:2px 8px;">删除</button>
         </div>
+        ${lb.desc ? `<div style="font-size:10px;color:#64748b;margin-top:2px;word-break:break-all;">适用：${escapeHtml(lb.desc)}</div>` : ''}
         ${rule.note ? `<div class="ignored-reason" style="margin-top:4px;">📝 ${escapeHtml(rule.note)}</div>` : ''}
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     container.querySelectorAll('.btn-danger').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -711,12 +894,26 @@
     });
   }
 
-  $('#btn-add-ignore').addEventListener('click', () => {
+  $('#btn-add-ignore').addEventListener('click', async () => {
     const type = $('#ignore-type').value;
     const val = $('#ignore-value').value.trim();
-    const scope = $('#ignore-scope').value.trim();
+    let scope = $('#ignore-scope').value.trim();
     const note = $('#ignore-note').value.trim();
     if (!val) return;
+
+    let scopeUrl = null;
+    const scopeLower = scope.toLowerCase();
+    const isThisPage = /^(本页|this|page)$/i.test(scopeLower) || scopeLower === '' && !scope;
+    if (isThisPage || scope === '本页') {
+      try {
+        const url = await getScanUrl();
+        if (url) { scopeUrl = url; }
+      } catch(e) {}
+      scope = '本页';
+    } else if (scope && /^(全站|全局|all|site|global)$/i.test(scope)) {
+      scope = '全站';
+    }
+
     if (type === 'color') {
       const parts = val.split('/');
       if (parts.length === 2) {
@@ -725,6 +922,7 @@
           fg: parts[0].trim(),
           bg: parts[1].trim(),
           scope,
+          scopeUrl,
           note,
           createdAt: Date.now()
         });
@@ -734,6 +932,7 @@
         type: 'selector',
         value: val,
         scope,
+        scopeUrl,
         note,
         createdAt: Date.now()
       });
@@ -767,7 +966,7 @@
 
   function getScanDiffSummary() {
     if (currentCompare) {
-      const diff = computeDiff(currentCompare.a.results, currentCompare.b.results);
+      const diff = computeDiff(currentCompare.a, currentCompare.b);
       return {
         fromScanId: currentCompare.a.id,
         toScanId: currentCompare.b.id,
@@ -777,6 +976,7 @@
         regressed: diff.regressed.length,
         added: diff.added.length,
         removed: diff.removed.length,
+        reviewChanged: (diff.reviewChanged || []).length,
         details: diff
       };
     }
@@ -862,12 +1062,17 @@
   function save(d){try{localStorage.setItem(initKey(), JSON.stringify(d));}catch(e){}}
   function makeId(item, idx){return (item.selector || md5Hash(item.text + item.fg + item.bg)) + '_' + idx;}
   function regionName(r){var map={'header':'页头','nav':'导航','menu':'菜单','sidebar':'侧栏','aside':'侧栏','main':'主内容','hero':'首屏','banner':'横幅','content':'正文','toolbar':'工具栏','breadcrumb':'面包屑','footer':'页脚'};return map[r]||r||'正文';}
+  function fmtTime(t){if(!t) return '';var d=new Date(t);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+  function currentAuthor(){try{return localStorage.getItem('a11y_review_author') || '';}catch(e){return '';}}
+  function setAuthor(n){try{localStorage.setItem('a11y_review_author', n||'');}catch(e){}}
+
   window.renderReviewView = function(allItems, regions){
     initKey();
     var state = load();
-    var filters = state.filters || {region:'all', level:'all', status:'all'};
+    var filters = state.filters || {region:'all', level:'all', status:'all', ignored:'all'};
     var comments = state.comments || {};
     var statuses = state.statuses || {};
+    var meta = state.meta || {};
 
     var container = document.getElementById('review-root');
     if(!container) return;
@@ -877,9 +1082,11 @@
     allRegions.sort();
     var levelOpts = [['all','全部'],['Fail','仅不达标'],['AA','仅 AA 达标'],['AAA','仅 AAA 达标']];
     var statusOpts = [['all','全部'],['pending','待评审'],['approved','已通过'],['rejected','需修改'],['discussed','已讨论']];
+    var ignoredOpts = [['all','全部条目'],['active','仅未忽略'],['ignored','仅已忽略']];
 
     function buildFilter(){
-      return '<div class="review-filters">' +
+      var author = currentAuthor();
+      return '<div class="review-filters" style="flex-wrap:wrap;">' +
         '<label><span>区域</span><select id="f-region">' +
           ['<option value="all">全部区域</option>'].concat(allRegions.map(function(r){return '<option value="'+r+'">'+regionName(r)+'</option>';})).join('') +
         '</select></label>' +
@@ -889,7 +1096,14 @@
         '<label><span>评审状态</span><select id="f-status">' +
           statusOpts.map(function(o){return '<option value="'+o[0]+'">'+o[1]+'</option>';}).join('') +
         '</select></label>' +
-        '<span class="review-count" id="review-count"></span>' +
+        '<label><span>忽略状态</span><select id="f-ignored">' +
+          ignoredOpts.map(function(o){return '<option value="'+o[0]+'">'+o[1]+'</option>';}).join('') +
+        '</select></label>' +
+        '<div style="display:flex;align-items:flex-end;gap:6px;margin-left:auto;flex-wrap:wrap;">' +
+          '<label style="margin:0;"><span>处理人</span><input id="f-author" type="text" placeholder="如：张三/前端/设计师" value="'+(author||'').replace(/"/g,'&quot;')+'" style="padding:6px 8px;font-size:13px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;min-width:110px;" /></label>' +
+          '<button class="rv-btn rv-btn-outline" id="btn-export-review">📤 导出意见</button>' +
+          '<label class="rv-btn rv-btn-outline" style="cursor:pointer;">📥 导入意见<input type="file" id="btn-import-review" accept=".json,application/json" style="display:none;" /></label>' +
+        '</div>' +
       '</div>';
     }
 
@@ -904,11 +1118,17 @@
       var id = makeId(item, idx);
       var c = comments[id] || '';
       var s = statuses[id] || 'pending';
+      var m = meta[id] || {};
       var ign = !!item._ignored;
       if(filters.region!=='all' && item.region!==filters.region) return '';
       if(filters.level!=='all' && item.level!==filters.level) return '';
       if(filters.status!=='all' && s!==filters.status) return '';
+      if(filters.ignored==='active' && ign) return '';
+      if(filters.ignored==='ignored' && !ign) return '';
       var rule = item._ignoredRule || {};
+      var metaLine = [];
+      if(m.author) metaLine.push('👤 ' + m.author);
+      if(m.updatedAt) metaLine.push('🕒 ' + fmtTime(m.updatedAt));
       return '<div class="rv-card" data-id="'+id+'" data-idx="'+idx+'"'+(ign?' data-ignored="1"':'')+'>' +
         (item.thumbnail ? '<img class="rv-thumb" src="'+item.thumbnail+'" />' : '<div class="rv-thumb-placeholder">无截图</div>') +
         '<div class="rv-body">' +
@@ -919,6 +1139,7 @@
               '<span class="sw" style="background:'+item.bg+'"></span><code>'+item.bg+'</code>' +
               '<span class="badge '+(item.level==='Fail'?'fail':item.level==='AA'?'aa':'pass')+'">'+item.ratio+':1 '+item.level+'</span>' +
               (item.region ? '<span class="rv-region">'+regionName(item.region)+'</span>' : '') +
+              (ign ? '<span class="rv-region" style="background:rgba(100,116,139,.1);color:#475569;">已忽略</span>' : '') +
             '</div>' +
             statusChip(s) +
           '</div>' +
@@ -926,6 +1147,7 @@
           '<div class="rv-meta"><code>'+(item.selector||'')+'</code> · '+item.fontSize+'px'+(item.bold?' · 粗体':'')+'</div>' +
           (item.suggestFg ? '<div class="rv-suggest">💡 建议前景色 <span class="sw" style="background:'+item.suggestFg+';display:inline-block;vertical-align:middle;"></span> <code>'+item.suggestFg+'</code> → <b style="color:#22c55e;">'+item.suggestRatio+':1</b></div>' : '') +
           (ign ? '<div class="rv-ignored">📌 已忽略 · 规则: '+(rule.type==='color'?rule.fg+'/'+rule.bg:rule.value)+(rule.scope?' ['+rule.scope+']':'')+(rule.note?' · '+rule.note:'')+'</div>' : '') +
+          (metaLine.length ? '<div class="rv-meta" style="color:#475569;">'+metaLine.join(' · ')+'</div>' : '') +
           '<div class="rv-actions">' +
             '<select class="st-select" data-id="'+id+'">' +
               statusOpts.map(function(o){return '<option value="'+o[0]+'"'+(s===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('') +
@@ -934,6 +1156,98 @@
           '</div>' +
         '</div>' +
       '</div>';
+    }
+
+    function exportReviewJson(){
+      var reportUrl = document.getElementById('report-url')?.textContent || '';
+      var reportTime = document.getElementById('report-time')?.textContent || '';
+      var author = document.getElementById('f-author')?.value || currentAuthor();
+      var payload = {
+        _type: 'color-a11y-review',
+        _version: 2,
+        reportUrl: reportUrl,
+        reportTime: reportTime,
+        exportedAt: new Date().toISOString(),
+        exportedBy: author || 'anonymous',
+        items: {}
+      };
+      allItems.forEach(function(it, idx){
+        var id = makeId(it, idx);
+        if((comments[id] && String(comments[id]).trim()) || (statuses[id] && statuses[id] !== 'pending') || meta[id]){
+          payload.items[id] = {
+            selector: it.selector,
+            text: it.text,
+            fg: it.fg,
+            bg: it.bg,
+            status: statuses[id] || 'pending',
+            comment: comments[id] || '',
+            author: (meta[id] && meta[id].author) || author || '',
+            updatedAt: (meta[id] && meta[id].updatedAt) || new Date().toISOString()
+          };
+        }
+      });
+      var blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+      var a = document.createElement('a');
+      var ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+      a.href = URL.createObjectURL(blob);
+      a.download = 'a11y-review_' + ts + '.json';
+      document.body.appendChild(a); a.click();
+      setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(a.href);}, 0);
+    }
+
+    function mergeReviewJson(obj){
+      if(!obj || typeof obj !== 'object') return {ok:false, msg:'无效的 JSON 文件'};
+      if(obj._type !== 'color-a11y-review') return {ok:false, msg:'文件不是本插件导出的评审意见'};
+      var imported = 0, updated = 0;
+      var now = new Date().toISOString();
+      var author = document.getElementById('f-author')?.value || currentAuthor() || (obj.exportedBy || '');
+      Object.keys(obj.items || {}).forEach(function(id){
+        var rec = obj.items[id];
+        if(!rec) return;
+        var oldC = comments[id] || '';
+        var oldS = statuses[id] || 'pending';
+        var oldM = meta[id] || {};
+        var newC = (rec.comment || '') + (oldC && rec.comment && oldC !== rec.comment ? '\\n\\n— '+(rec.author||'他人')+' · '+fmtTime(rec.updatedAt)+' —\\n' + oldC : (oldC || ''));
+        var newS = rec.status || oldS;
+        if(!oldC && !rec.comment && oldS==='pending' && newS==='pending') return;
+        if(newC !== oldC || newS !== oldS){
+          if(newC !== oldC) comments[id] = newC;
+          if(newS !== oldS){ statuses[id] = newS; updated++; }
+          else imported++;
+          meta[id] = {
+            author: rec.author || oldM.author || author,
+            updatedAt: rec.updatedAt || oldM.updatedAt || now
+          };
+        }
+      });
+      save({filters, comments, statuses, meta});
+      return {ok:true, imported: imported, updated: updated};
+    }
+
+    function bindImport(){
+      var input = document.getElementById('btn-import-review');
+      if(!input) return;
+      input.addEventListener('change', function(e){
+        var f = e.target.files && e.target.files[0];
+        if(!f) return;
+        var reader = new FileReader();
+        reader.onload = function(ev){
+          try{
+            var obj = JSON.parse(ev.target.result);
+            var r = mergeReviewJson(obj);
+            if(r.ok){
+              alert('✅ 导入完成！\\n新导入 '+r.imported+' 条，覆盖/更新 '+r.updated+' 条状态。');
+              render();
+            } else {
+              alert('❌ ' + (r.msg || '导入失败'));
+            }
+          } catch(err){
+            alert('❌ JSON 解析失败：' + err.message);
+          }
+        };
+        reader.readAsText(f);
+        input.value = '';
+      });
     }
 
     function render(){
@@ -952,22 +1266,35 @@
       document.getElementById('f-region').value = filters.region;
       document.getElementById('f-level').value = filters.level;
       document.getElementById('f-status').value = filters.status;
+      document.getElementById('f-ignored').value = filters.ignored;
 
       var persistTimer = null;
-      function persist(){if(persistTimer)clearTimeout(persistTimer);persistTimer=setTimeout(function(){save({filters,comments,statuses});}, 150);}
+      function persist(){if(persistTimer)clearTimeout(persistTimer);persistTimer=setTimeout(function(){save({filters,comments,statuses,meta});}, 150);}
 
-      ['f-region','f-level','f-status'].forEach(function(fid){
+      ['f-region','f-level','f-status','f-ignored'].forEach(function(fid){
         document.getElementById(fid).addEventListener('change', function(e){
-          var key = fid==='f-region'?'region':fid==='f-level'?'level':'status';
+          var key = fid==='f-region'?'region':fid==='f-level'?'level':fid==='f-status'?'status':'ignored';
           filters[key] = e.target.value;
           persist();
           render();
         });
       });
 
+      var authorInput = document.getElementById('f-author');
+      if(authorInput){
+        authorInput.addEventListener('input', function(e){ setAuthor(e.target.value); });
+      }
+
+      var expBtn = document.getElementById('btn-export-review');
+      if(expBtn) expBtn.addEventListener('click', exportReviewJson);
+      bindImport();
+
       document.querySelectorAll('.rv-card .st-select').forEach(function(sel){
         sel.addEventListener('change', function(e){
-          statuses[sel.dataset.id] = e.target.value;
+          var id = sel.dataset.id;
+          statuses[id] = e.target.value;
+          var author = document.getElementById('f-author')?.value || currentAuthor();
+          meta[id] = Object.assign({}, meta[id]||{}, {author: author || (meta[id]&&meta[id].author) || '', updatedAt: new Date().toISOString()});
           persist();
           render();
         });
@@ -975,8 +1302,12 @@
 
       document.querySelectorAll('.rv-card .rv-comment').forEach(function(ta){
         ta.addEventListener('input', function(e){
-          comments[ta.dataset.id] = ta.value;
+          var id = ta.dataset.id;
+          comments[id] = ta.value;
+          var author = document.getElementById('f-author')?.value || currentAuthor();
+          meta[id] = Object.assign({}, meta[id]||{}, {author: author || (meta[id]&&meta[id].author) || '', updatedAt: new Date().toISOString()});
           persist();
+          var metaBox = ta.closest('.rv-card').querySelector('.rv-meta');
         });
       });
     }
@@ -1089,9 +1420,11 @@
             <div class="stat orange">${d.regressed.length}<span>退化</span></div>
             <div class="stat blue">${d.added.length}<span>新增</span></div>
             <div class="stat gray">${d.removed.length}<span>移除</span></div>
+            ${(d.reviewChanged||[]).length ? `<div class="stat" style="color:#8b5cf6;">${d.reviewChanged.length}<span>评审变动</span></div>` : ''}
           </div>
           ${sectionDiff('改善项', d.improved, 'imp', '↑')}
           ${sectionDiff('退化项', d.regressed, 'reg', '↓')}
+          ${(d.reviewChanged||[]).length ? sectionDiff('评审结论变化', d.reviewChanged, 'disc', '💬') : ''}
           ${sectionDiff('新增项', d.added, 'add', '＋')}
           ${sectionDiff('移除项', d.removed, 'rmv', '−')}
         </section>
@@ -1181,6 +1514,9 @@ h3{font-size:14px;margin:16px 0 8px;color:#334155}
 .st.approved{background:#f0fdf4;color:#16a34a;}
 .st.rejected{background:#fef2f2;color:#dc2626;}
 .st.discussed{background:#eff6ff;color:#2563eb;}
+.rv-btn{display:inline-block;padding:6px 10px;font-size:12px;border-radius:5px;border:1px solid transparent;cursor:pointer;font-weight:500;line-height:1.4;user-select:none;}
+.rv-btn-outline{background:#fff;border-color:#cbd5e1;color:#334155;}
+.rv-btn-outline:hover{background:#f1f5f9;border-color:#94a3b8;}
 code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#475569;}
 .footer{margin-top:32px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;text-align:center}
 </style>
@@ -1299,5 +1635,6 @@ ${ignoredHtml}
   loadBrandColors();
   loadIgnoreRules();
   loadPickerResult();
+  loadReview();
   checkRestorable();
 })();
