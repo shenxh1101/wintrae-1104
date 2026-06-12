@@ -380,46 +380,111 @@
     });
   });
 
+  let expandedDiffKeys = new Set();
+
   function renderCompareView() {
     if (!currentCompare) return;
     const { a, b } = currentCompare;
     const diff = computeDiff(a.results, b.results);
     $('#report-content').innerHTML = `
       <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:8px 10px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-        <span style="font-size:11px;">对比中 — 点击取消</span>
+        <div>
+          <div style="font-size:11px;color:#64748b;">对比中</div>
+          <div style="font-size:11px;">A: ${new Date(a.timestamp).toLocaleString('zh-CN')} → B: ${new Date(b.timestamp).toLocaleString('zh-CN')}</div>
+        </div>
         <button class="btn btn-sm btn-outline" id="btn-cancel-compare">取消对比</button>
       </div>
       <div class="stat-row">
-        <div class="stat-card"><div class="num" style="color:#22c55e;">+${diff.improved.length}</div><div class="label">改善</div></div>
-        <div class="stat-card"><div class="num" style="color:#ef4444;">+${diff.regressed.length}</div><div class="label">退化</div></div>
-        <div class="stat-card"><div class="num" style="color:#3b82f6;">+${diff.added.length}</div><div class="label">新增</div></div>
-        <div class="stat-card"><div class="num" style="color:#64748b;">+${diff.removed.length}</div><div class="label">移除</div></div>
+        <div class="stat-card"><div class="num" style="color:#22c55e;">${diff.improved.length}</div><div class="label">改善</div></div>
+        <div class="stat-card"><div class="num" style="color:#ef4444;">${diff.regressed.length}</div><div class="label">退化</div></div>
+        <div class="stat-card"><div class="num" style="color:#3b82f6;">${diff.added.length}</div><div class="label">新增</div></div>
+        <div class="stat-card"><div class="num" style="color:#64748b;">${diff.removed.length}</div><div class="label">移除</div></div>
       </div>
-      ${renderDiffSection('改善', diff.improved, 'diff-improved', '↑', '#22c55e', true)}
-      ${renderDiffSection('退化', diff.regressed, 'diff-regressed', '↓', '#f97316', true)}
-      ${renderDiffSection('新增元素', diff.added, 'diff-added', '＋', '#22c55e', false)}
-      ${renderDiffSection('移除元素', diff.removed, 'diff-removed', '−', '#ef4444', false)}
+      ${renderDiffSection('改善项', diff.improved, 'diff-improved', '↑', '#22c55e', 'improved')}
+      ${renderDiffSection('退化项', diff.regressed, 'diff-regressed', '↓', '#f97316', 'regressed')}
+      ${renderDiffSection('新增元素', diff.added, 'diff-added', '＋', '#22c55e', 'added')}
+      ${renderDiffSection('移除元素', diff.removed, 'diff-removed', '−', '#ef4444', 'removed')}
     `;
     const btnCancel = $('#btn-cancel-compare');
-    if (btnCancel) btnCancel.addEventListener('click', () => { currentCompare = null; renderReport(); });
+    if (btnCancel) btnCancel.addEventListener('click', () => { currentCompare = null; expandedDiffKeys.clear(); renderReport(); });
+    $('#report-content').querySelectorAll('.diff-row').forEach(row => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('input,button,textarea,a')) return;
+        const key = row.dataset.key;
+        if (!key) return;
+        if (expandedDiffKeys.has(key)) expandedDiffKeys.delete(key);
+        else expandedDiffKeys.add(key);
+        renderCompareView();
+      });
+    });
   }
 
-  function renderDiffSection(title, items, cls, badge, color, hasOld) {
+  function renderDiffSection(title, items, cls, badge, color, groupName) {
     if (items.length === 0) return '';
     return `
-      <h3 style="margin-top:12px;color:${color};">${title} (${items.length})</h3>
-      ${items.slice(0, 30).map(d => `
-        <div class="diff-row ${cls}">
+      <h3 style="margin-top:14px;color:${color};display:flex;align-items:center;justify-content:space-between;">
+        <span>${title} <small style="color:#64748b;font-weight:400;">(${items.length})</small></span>
+        <small style="font-size:10px;color:#94a3b8;font-weight:400;">点击条目查看详情</small>
+      </h3>
+      ${items.slice(0, 50).map((d, i) => {
+        const key = `${groupName}-${d.selector || ('x'+i)}-${i}`;
+        const open = expandedDiffKeys.has(key);
+        const hasOld = d.oldRatio !== undefined;
+        return `
+        <div class="diff-row ${cls}" data-key="${key}" style="cursor:pointer;${open ? 'background:rgba(248,250,252,0.9);' : ''}">
           <div class="diff-badge">${badge}</div>
-          <div>
+          <div style="flex:1;min-width:0;">
             ${hasOld && d.oldRatio ? `<div class="diff-old">${d.oldRatio}:1 (${d.oldLevel})</div>` : ''}
-            <div class="diff-new" style="font-weight:600;">${d.text ? escapeHtml(d.text.slice(0, 24)) : escapeHtml(d.selector || '').slice(0, 28)}</div>
+            <div class="diff-new" style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${d.text ? escapeHtml(d.text.slice(0, 26)) : escapeHtml(d.selector || '').slice(0, 30)}</div>
           </div>
           <div>
-            ${d.newRatio ? `<span class="result-level ${d.newLevel === 'Fail' ? 'fail' : d.newLevel === 'AA' ? 'aa' : 'aaa'}" style="font-size:10px;">${d.newRatio}:1 ${d.newLevel}</span>` : ''}
+            ${d.newRatio ? `<span class="result-level ${d.newLevel === 'Fail' ? 'fail' : d.newLevel === 'AA' ? 'aa' : 'aaa'}" style="font-size:10px;">${d.newRatio}:1 ${d.newLevel}</span>` : d.oldLevel ? `<span class="result-level fail" style="font-size:10px;">${d.oldLevel}</span>` : ''}
+            <span style="margin-left:4px;font-size:10px;color:#94a3b8;">${open ? '▲' : '▼'}</span>
           </div>
         </div>
-      `).join('')}
+        ${open ? renderDiffDetail(d, cls, badge, color) : ''}
+      `;
+      }).join('')}
+    `;
+  }
+
+  function renderDiffDetail(d, cls, badge, color) {
+    const oldItem = d._old;
+    const newItem = d._new;
+    const colBlock = (item, label, side) => {
+      if (!item) return `<div style="flex:1;min-width:0;"><div style="font-size:11px;color:#64748b;margin-bottom:6px;">${label}</div><div style="background:#f8fafc;border-radius:6px;padding:10px;border:1px dashed #cbd5e1;text-align:center;color:#94a3b8;font-size:11px;">${side === 'A' ? '已不存在于当前版本' : '上一版本不存在此元素'}</div></div>`;
+      return `
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:11px;color:#64748b;margin-bottom:6px;font-weight:600;">${label}</div>
+          ${item.thumbnail ? `<img src="${item.thumbnail}" style="width:100%;max-height:100px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#fff;margin-bottom:6px;" />` : ''}
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;">
+            <span style="display:inline-flex;align-items:center;gap:3px;"><span class="color-swatch" style="background:${item.fg};width:14px;height:14px;"></span><code style="font-size:10px;color:#475569;">${item.fg}</code></span>
+            <span style="font-size:10px;color:#94a3b8;">on</span>
+            <span style="display:inline-flex;align-items:center;gap:3px;"><span class="color-swatch" style="background:${item.bg};width:14px;height:14px;"></span><code style="font-size:10px;color:#475569;">${item.bg}</code></span>
+          </div>
+          <div style="margin-bottom:4px;"><span class="result-level ${item.level === 'Fail' ? 'fail' : item.level === 'AA' ? 'aa' : 'aaa'}" style="font-size:10px;">${item.ratio}:1 ${item.level}</span> <span style="font-size:10px;color:#64748b;">${item.fontSize}px${item.bold ? ' · 粗体' : ''}</span></div>
+          ${item.suggestFg ? `<div style="font-size:11px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:4px;padding:4px 6px;margin:4px 0;"><span style="color:#16a34a;">💡 建议前景色 </span><span style="display:inline-flex;align-items:center;gap:3px;"><span class="color-swatch" style="background:${item.suggestFg};width:12px;height:12px;"></span><code style="font-size:10px;">${item.suggestFg}</code></span> <span style="color:#16a34a;">→ ${item.suggestRatio}:1</span></div>` : ''}
+          <div style="font-size:10px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeAttr(item.text || '')}">${escapeHtml((item.text || '').slice(0, 40))}</div>
+          ${item.region ? `<div style="margin-top:4px;font-size:10px;"><span style="background:rgba(59,130,246,.1);color:var(--accent);padding:1px 5px;border-radius:3px;">${escapeHtml(item.region)}</span></div>` : ''}
+        </div>
+      `;
+    };
+    return `
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin:-3px 0 6px 36px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+        <div style="display:flex;gap:10px;align-items:stretch;">
+          ${colBlock(oldItem, '👈 上一版本 (A)', 'A')}
+          <div style="width:1px;background:#e2e8f0;flex-shrink:0;"></div>
+          ${colBlock(newItem, '👉 当前版本 (B)', 'B')}
+        </div>
+        ${newItem?.ignoredBecause || oldItem?.ignoredBecause ? `
+        <div style="margin-top:8px;padding:6px 8px;background:rgba(100,116,139,.08);border-left:3px solid #64748b;border-radius:4px;font-size:11px;">
+          📌 忽略规则：${escapeHtml(
+            (newItem?.ignoredBecause?.note || oldItem?.ignoredBecause?.note || '') +
+            (newItem?.ignoredBecause?.scope || oldItem?.ignoredBecause?.scope ? `[${newItem?.ignoredBecause?.scope || oldItem?.ignoredBecause?.scope}]` : '')
+          ) || '已命中忽略规则'}
+        </div>
+        ` : ''}
+      </div>
     `;
   }
 
@@ -437,28 +502,29 @@
     oldResults.forEach(a => {
       const b = bMap.get(a.selector);
       if (!b) {
-        removed.push({ selector: a.selector, text: a.text, oldRatio: a.ratio, oldLevel: a.level });
+        removed.push({ selector: a.selector, text: a.text, oldRatio: a.ratio, oldLevel: a.level, _old: a, _new: null });
         return;
       }
       const rankDelta = levelRank[b.level] - levelRank[a.level];
+      const pushData = (arr) => arr.push({
+        selector: a.selector,
+        text: b.text || a.text,
+        oldRatio: a.ratio, oldLevel: a.level,
+        newRatio: b.ratio, newLevel: b.level,
+        _old: a, _new: b
+      });
       if (rankDelta > 0 || (b.ratio - a.ratio >= 0.5 && levelRank[b.level] >= levelRank[a.level])) {
-        if (levelRank[b.level] > levelRank[a.level]) {
-          improved.push({ selector: a.selector, text: b.text || a.text, oldRatio: a.ratio, oldLevel: a.level, newRatio: b.ratio, newLevel: b.level });
-        } else if (rankDelta === 0 && b.ratio - a.ratio >= 0.5) {
-          improved.push({ selector: a.selector, text: b.text || a.text, oldRatio: a.ratio, oldLevel: a.level, newRatio: b.ratio, newLevel: b.level });
-        }
+        if (levelRank[b.level] > levelRank[a.level]) pushData(improved);
+        else if (rankDelta === 0 && b.ratio - a.ratio >= 0.5) pushData(improved);
       } else if (rankDelta < 0 || a.ratio - b.ratio >= 0.5) {
-        if (levelRank[b.level] < levelRank[a.level]) {
-          regressed.push({ selector: a.selector, text: b.text || a.text, oldRatio: a.ratio, oldLevel: a.level, newRatio: b.ratio, newLevel: b.level });
-        } else if (rankDelta === 0 && a.ratio - b.ratio >= 0.5) {
-          regressed.push({ selector: a.selector, text: b.text || a.text, oldRatio: a.ratio, oldLevel: a.level, newRatio: b.ratio, newLevel: b.level });
-        }
+        if (levelRank[b.level] < levelRank[a.level]) pushData(regressed);
+        else if (rankDelta === 0 && a.ratio - b.ratio >= 0.5) pushData(regressed);
       }
     });
 
     newResults.forEach(b => {
       if (!aMap.has(b.selector)) {
-        added.push({ selector: b.selector, text: b.text, newRatio: b.ratio, newLevel: b.level });
+        added.push({ selector: b.selector, text: b.text, newRatio: b.ratio, newLevel: b.level, _old: null, _new: b });
       }
     });
 
@@ -781,6 +847,146 @@
     downloadFile(html, 'a11y-report.html', 'text/html;charset=utf-8');
   });
 
+  function generateReviewViewScript() {
+    return `
+(function(){
+  function md5Hash(s){var h=0;for(var i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return 'h'+('0000000'+(h>>>0).toString(36)).slice(-7);}
+  var DATA_KEY = null;
+  function initKey(){
+    var url = document.getElementById('report-url')?.textContent || location.href;
+    var ts = document.getElementById('report-time')?.textContent || '';
+    DATA_KEY = 'a11y_review_' + md5Hash(url + '|' + ts);
+    return DATA_KEY;
+  }
+  function load(){try{return JSON.parse(localStorage.getItem(initKey())||'{}');}catch(e){return {};}}
+  function save(d){try{localStorage.setItem(initKey(), JSON.stringify(d));}catch(e){}}
+  function makeId(item, idx){return (item.selector || md5Hash(item.text + item.fg + item.bg)) + '_' + idx;}
+  function regionName(r){var map={'header':'页头','nav':'导航','menu':'菜单','sidebar':'侧栏','aside':'侧栏','main':'主内容','hero':'首屏','banner':'横幅','content':'正文','toolbar':'工具栏','breadcrumb':'面包屑','footer':'页脚'};return map[r]||r||'正文';}
+  window.renderReviewView = function(allItems, regions){
+    initKey();
+    var state = load();
+    var filters = state.filters || {region:'all', level:'all', status:'all'};
+    var comments = state.comments || {};
+    var statuses = state.statuses || {};
+
+    var container = document.getElementById('review-root');
+    if(!container) return;
+
+    function unique(arr){var seen={};return arr.filter(function(x){if(x in seen)return false;seen[x]=1;return true;});}
+    var allRegions = unique(regions.filter(Boolean));
+    allRegions.sort();
+    var levelOpts = [['all','全部'],['Fail','仅不达标'],['AA','仅 AA 达标'],['AAA','仅 AAA 达标']];
+    var statusOpts = [['all','全部'],['pending','待评审'],['approved','已通过'],['rejected','需修改'],['discussed','已讨论']];
+
+    function buildFilter(){
+      return '<div class="review-filters">' +
+        '<label><span>区域</span><select id="f-region">' +
+          ['<option value="all">全部区域</option>'].concat(allRegions.map(function(r){return '<option value="'+r+'">'+regionName(r)+'</option>';})).join('') +
+        '</select></label>' +
+        '<label><span>等级</span><select id="f-level">' +
+          levelOpts.map(function(o){return '<option value="'+o[0]+'">'+o[1]+'</option>';}).join('') +
+        '</select></label>' +
+        '<label><span>评审状态</span><select id="f-status">' +
+          statusOpts.map(function(o){return '<option value="'+o[0]+'">'+o[1]+'</option>';}).join('') +
+        '</select></label>' +
+        '<span class="review-count" id="review-count"></span>' +
+      '</div>';
+    }
+
+    function statusChip(s){
+      if(!s||s==='pending') return '<span class="st pending">待评审</span>';
+      var map={'approved':['st approved','已通过'],'rejected':['st rejected','需修改'],'discussed':['st discussed','已讨论']};
+      var m = map[s]||['st pending','待评审'];
+      return '<span class="'+m[0]+'">'+m[1]+'</span>';
+    }
+
+    function buildCard(item, idx){
+      var id = makeId(item, idx);
+      var c = comments[id] || '';
+      var s = statuses[id] || 'pending';
+      var ign = !!item._ignored;
+      if(filters.region!=='all' && item.region!==filters.region) return '';
+      if(filters.level!=='all' && item.level!==filters.level) return '';
+      if(filters.status!=='all' && s!==filters.status) return '';
+      var rule = item._ignoredRule || {};
+      return '<div class="rv-card" data-id="'+id+'" data-idx="'+idx+'"'+(ign?' data-ignored="1"':'')+'>' +
+        (item.thumbnail ? '<img class="rv-thumb" src="'+item.thumbnail+'" />' : '<div class="rv-thumb-placeholder">无截图</div>') +
+        '<div class="rv-body">' +
+          '<div class="rv-top">' +
+            '<div class="swatches" style="margin:0;">' +
+              '<span class="sw" style="background:'+item.fg+'"></span><code>'+item.fg+'</code>' +
+              '<span class="on">on</span>' +
+              '<span class="sw" style="background:'+item.bg+'"></span><code>'+item.bg+'</code>' +
+              '<span class="badge '+(item.level==='Fail'?'fail':item.level==='AA'?'aa':'pass')+'">'+item.ratio+':1 '+item.level+'</span>' +
+              (item.region ? '<span class="rv-region">'+regionName(item.region)+'</span>' : '') +
+            '</div>' +
+            statusChip(s) +
+          '</div>' +
+          '<div class="rv-text">'+(item.text||'(无文本)')+'</div>' +
+          '<div class="rv-meta"><code>'+(item.selector||'')+'</code> · '+item.fontSize+'px'+(item.bold?' · 粗体':'')+'</div>' +
+          (item.suggestFg ? '<div class="rv-suggest">💡 建议前景色 <span class="sw" style="background:'+item.suggestFg+';display:inline-block;vertical-align:middle;"></span> <code>'+item.suggestFg+'</code> → <b style="color:#22c55e;">'+item.suggestRatio+':1</b></div>' : '') +
+          (ign ? '<div class="rv-ignored">📌 已忽略 · 规则: '+(rule.type==='color'?rule.fg+'/'+rule.bg:rule.value)+(rule.scope?' ['+rule.scope+']':'')+(rule.note?' · '+rule.note:'')+'</div>' : '') +
+          '<div class="rv-actions">' +
+            '<select class="st-select" data-id="'+id+'">' +
+              statusOpts.map(function(o){return '<option value="'+o[0]+'"'+(s===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('') +
+            '</select>' +
+            '<textarea class="rv-comment" placeholder="写评审意见（如：需调整对比度、保留品牌色、改为AA即可）…" rows="2" data-id="'+id+'">'+(c||'').replace(/</g,'&lt;')+'</textarea>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function render(){
+      var html = buildFilter();
+      var shown = 0;
+      var cardsHtml = '';
+      allItems.forEach(function(it, idx){
+        var c = buildCard(it, idx);
+        if(c){shown++;cardsHtml += c;}
+      });
+      html += '<div style="margin:10px 0 6px;font-size:12px;color:#64748b;">共显示 <b>'+shown+'</b> / '+allItems.length+' 条</div>';
+      if(shown === 0) html += '<div style="padding:40px;background:#fff;border:1px dashed #cbd5e1;border-radius:8px;text-align:center;color:#94a3b8;">没有符合当前筛选条件的条目</div>';
+      else html += '<div class="rv-grid">'+cardsHtml+'</div>';
+      container.innerHTML = html;
+
+      document.getElementById('f-region').value = filters.region;
+      document.getElementById('f-level').value = filters.level;
+      document.getElementById('f-status').value = filters.status;
+
+      var persistTimer = null;
+      function persist(){if(persistTimer)clearTimeout(persistTimer);persistTimer=setTimeout(function(){save({filters,comments,statuses});}, 150);}
+
+      ['f-region','f-level','f-status'].forEach(function(fid){
+        document.getElementById(fid).addEventListener('change', function(e){
+          var key = fid==='f-region'?'region':fid==='f-level'?'level':'status';
+          filters[key] = e.target.value;
+          persist();
+          render();
+        });
+      });
+
+      document.querySelectorAll('.rv-card .st-select').forEach(function(sel){
+        sel.addEventListener('change', function(e){
+          statuses[sel.dataset.id] = e.target.value;
+          persist();
+          render();
+        });
+      });
+
+      document.querySelectorAll('.rv-card .rv-comment').forEach(function(ta){
+        ta.addEventListener('input', function(e){
+          comments[ta.dataset.id] = ta.value;
+          persist();
+        });
+      });
+    }
+
+    render();
+  };
+})();
+`;
+  }
+
   function buildHtmlReport(results, summary, ignored, url, scanTime, diff, compare) {
     const failItems = results.filter(i => i.level === 'Fail');
     const aaItems = results.filter(i => i.level === 'AA');
@@ -949,12 +1155,39 @@ h3{font-size:14px;margin:16px 0 8px;color:#334155}
 .diff-badge{text-align:center;font-size:14px}
 .diff-old{color:#94a3b8;font-size:10px;text-decoration:line-through;display:block}
 .diff-new{font-weight:600}
+.review-filters{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:12px;}
+.review-filters label{display:flex;flex-direction:column;font-size:11px;color:#64748b;gap:4px;}
+.review-filters select{padding:6px 8px;font-size:13px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;min-width:120px;}
+.review-count{margin-left:auto;font-size:12px;color:#64748b;}
+.rv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;}
+.rv-card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;display:flex;gap:10px;flex-direction:column;}
+.rv-card[data-ignored="1"]{opacity:.85;background:#fcfcfc;}
+.rv-thumb{width:100%;max-height:120px;object-fit:contain;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;}
+.rv-thumb-placeholder{width:100%;height:90px;background:repeating-linear-gradient(45deg,#f1f5f9 25%,#e2e8f0 0 50%,#f1f5f9 0 75%,#e2e8f0 0);border-radius:6px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px;}
+.rv-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+.rv-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.rv-region{display:inline-block;background:rgba(59,130,246,.1);color:#1d4ed8;font-size:10px;padding:1px 6px;border-radius:3px;margin-left:2px;}
+.rv-text{font-size:13px;color:#334155;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rv-meta{font-size:11px;color:#94a3b8;margin:0;}
+.rv-meta code{background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:10px;}
+.rv-suggest{font-size:11px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:4px;padding:4px 6px;margin-top:4px;color:#15803d;}
+.rv-suggest code{background:#ffffff80;padding:0 3px;border-radius:2px;font-size:10px;}
+.rv-ignored{font-size:11px;background:rgba(100,116,139,.06);border-left:3px solid #64748b;padding:4px 6px;margin-top:4px;border-radius:3px;color:#475569;}
+.rv-actions{display:flex;flex-direction:column;gap:6px;margin-top:6px;padding-top:6px;border-top:1px dashed #e2e8f0;}
+.st-select{padding:4px 6px;font-size:11px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;}
+.rv-comment{width:100%;padding:6px;font-size:12px;border:1px solid #cbd5e1;border-radius:4px;resize:vertical;}
+.st{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;}
+.st.pending{background:#f1f5f9;color:#475569;}
+.st.approved{background:#f0fdf4;color:#16a34a;}
+.st.rejected{background:#fef2f2;color:#dc2626;}
+.st.discussed{background:#eff6ff;color:#2563eb;}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#475569;}
 .footer{margin-top:32px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;text-align:center}
 </style>
 </head>
 <body>
 <h1>🌈 颜色无障碍检查报告<span class="sub">Color A11y Checker</span></h1>
-<div class="url">📄 页面：<a href="${escapeHtml(url)}">${escapeHtml(url)}</a><br>⏱️ 扫描时间：${new Date(scanTime).toLocaleString('zh-CN')}</div>
+<div class="url">📄 页面：<a id="report-url" href="${escapeHtml(url)}">${escapeHtml(url)}</a><br>⏱️ 扫描时间：<span id="report-time">${new Date(scanTime).toISOString()}</span> · ${new Date(scanTime).toLocaleString('zh-CN')}</div>
 
 <section>
 <h2>📊 总览</h2>
@@ -988,7 +1221,33 @@ ${suggestionsHtml}
 
 ${ignoredHtml}
 
-<div class="footer">本报告由 Color A11y Checker 生成 · 导出于 ${new Date().toLocaleString('zh-CN')} · 设计师无需安装插件即可查看</div>
+<section>
+<h2>🗂️ 评审视图 <small style="font-size:11px;color:#64748b;font-weight:400;">（按区域/等级筛选 · 写评审意见 · 自动保存）</small></h2>
+<div id="review-root"></div>
+</section>
+
+<script>
+(function(){
+  ${generateReviewViewScript()}
+  var ALL_ITEMS = (function(){
+    var norm = function(list, isIgnored, ignoredRuleFrom){
+      return (list||[]).map(function(it, i){
+        var obj = JSON.parse(JSON.stringify(it));
+        if(isIgnored){ obj._ignored = true; obj._ignoredRule = ignoredRuleFrom ? (ignoredRuleFrom[it.selector] || it.ignoredBecause || {}) : (it.ignoredBecause || {}); }
+        return obj;
+      });
+    };
+    var all = norm(${JSON.stringify(results)}, false)
+      .concat(norm(${JSON.stringify(ignored||[])}, true));
+    all.sort(function(a,b){return (a.ratio||0)-(b.ratio||0);});
+    return all;
+  })();
+  var REGIONS = ALL_ITEMS.map(function(it){return it.region||'content';});
+  if(window.renderReviewView){ setTimeout(function(){ window.renderReviewView(ALL_ITEMS, REGIONS); }, 0); }
+})();
+</script>
+
+<div class="footer">本报告由 Color A11y Checker 生成 · 导出于 ${new Date().toLocaleString('zh-CN')} · 设计师无需安装插件即可查看 · 评审意见自动保存于浏览器 localStorage</div>
 </body>
 </html>`;
   }

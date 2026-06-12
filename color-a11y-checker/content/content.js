@@ -47,15 +47,60 @@
     return elements;
   }
 
-  function isIgnored(fgHex, bgHex, selector) {
-    return !!findIgnoreRule(fgHex, bgHex, selector);
+  function normalizeFgBg(fg, bg) {
+    const n = ColorUtils.normalizeHex;
+    return [n(fg), n(bg)];
   }
 
-  function findIgnoreRule(fgHex, bgHex, selector) {
+  function isIgnored(fgHex, bgHex, selector, url) {
+    return !!findIgnoreRule(fgHex, bgHex, selector, url || location.href);
+  }
+
+  function ruleScopeMatches(rule, url) {
+    if (!rule || !rule.scope) return true;
+    const s = String(rule.scope).trim();
+    if (!s || s === '全站' || s === '全局' || /^(all|site|global|全站)$/i.test(s)) return true;
+    if (s === '本页' || /^(this|page|本页)$/i.test(s)) return true;
+    try {
+      const u = new URL(url || location.href);
+      if (s.startsWith('http://') || s.startsWith('https://')) {
+        try {
+          const target = new URL(s);
+          return u.origin === target.origin && (
+            u.pathname === target.pathname ||
+            u.pathname.startsWith(target.pathname.replace(/\/$/, '') + '/')
+          );
+        } catch(e) {
+          return false;
+        }
+      }
+      if (s.includes('*') || s.includes('/')) {
+        const pattern = s
+          .replace(/\./g, '\\.')
+          .replace(/\*/g, '.*')
+          .replace(/\//g, '\\/');
+        const re = new RegExp('^' + pattern + '$', 'i');
+        return re.test(url || location.href);
+      }
+      if (u.hostname.includes(s) || (u.pathname + u.search).includes(s)) return true;
+    } catch(e) {}
+    return true;
+  }
+
+  function findIgnoreRule(fgHex, bgHex, selector, url) {
+    const [nFg, nBg] = normalizeFgBg(fgHex, bgHex);
     for (let i = 0; i < ignoreRules.length; i++) {
       const rule = ignoreRules[i];
-      if (rule.type === 'color' && rule.fg === fgHex && rule.bg === bgHex) return rule;
-      if (rule.type === 'selector' && selector && selector.includes(rule.value)) return rule;
+      if (!ruleScopeMatches(rule, url || location.href)) continue;
+      if (rule.type === 'color') {
+        const [rFg, rBg] = normalizeFgBg(rule.fg, rule.bg);
+        if (rFg === nFg && rBg === nBg) return rule;
+      }
+      if (rule.type === 'selector' && selector && (
+        selector === rule.value ||
+        selector.includes(rule.value) ||
+        rule.value.includes('*') && (new RegExp('^' + String(rule.value).replace(/\./g,'\\.').replace(/\*/g,'.*') + '$')).test(selector)
+      )) return rule;
     }
     return null;
   }
@@ -81,8 +126,8 @@
     try {
       const style = getComputedStyle(el);
       const rect = el.getBoundingClientRect();
-      let w = Math.max(40, Math.min(rect.width, 360));
-      let h = Math.max(28, Math.min(rect.height, 120));
+      let w = Math.max(60, Math.min(rect.width, 420));
+      let h = Math.max(32, Math.min(rect.height, 180));
       const scale = w / rect.width;
       const canvas = document.createElement('canvas');
       canvas.width = w * 2;
@@ -102,12 +147,72 @@
       ctx.fillRect(0, 0, w, h);
 
       const borderRadius = Math.min(parseFloat(style.borderRadius || 0), h / 2) * scale;
-      if (borderRadius > 0) {
-        ctx.save();
-        ctx.globalCompositeOperation = 'destination-in';
-        roundRect(ctx, 0, 0, w, h, borderRadius);
-        ctx.fill();
-        ctx.restore();
+      const tag = el.tagName.toLowerCase();
+      const inner = el.innerHTML || '';
+      const hasImg = /<img/i.test(inner) || tag === 'img';
+      const isBtn = tag === 'button' || style.display === 'inline-block' && /pointer|button/i.test(style.cursor + ' ' + style.appearance);
+      const isNav = tag === 'nav' || /nav|menu/i.test(style.className || el.className || '');
+      const isTable = ['table','tr','td','th'].includes(tag);
+      const isInput = ['input','textarea','select'].includes(tag);
+
+      if (isTable) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+        ctx.lineWidth = 1;
+        const cellW = w / Math.min(4, Math.max(2, inner.split(/\s+/).filter(Boolean).length || 3));
+        for (let cx = 1; cx < 4; cx++) {
+          ctx.beginPath(); ctx.moveTo(cx * cellW, 0); ctx.lineTo(cx * cellW, h); ctx.stroke();
+        }
+        for (let cy = 1; cy < 3; cy++) {
+          const y = cy * h / 3;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        }
+      } else if (isNav) {
+        const items = (el.textContent || '').split(/[\s,，|\/\\]+/).filter(Boolean).slice(0, 5);
+        const itemW = items.length ? w / items.length : w;
+        for (let k = 0; k < items.length; k++) {
+          const ix = k * itemW + 8;
+          const iy = h * 0.35;
+          ctx.fillStyle = fgHex;
+          const fs = Math.max(9, Math.min(14, size * scale));
+          ctx.font = `${bold ? 'bold' : 'normal'} ${fs}px system-ui, sans-serif`;
+          const t = items[k].slice(0, 6);
+          if (ctx.measureText(t).width > itemW - 12) ctx.fillText(t.slice(0, Math.max(1, Math.floor((itemW - 12) / fs * 1.6))) + '…', ix, iy + fs);
+          else ctx.fillText(t, ix, iy + fs);
+        }
+      } else if (hasImg || tag === 'img') {
+        const imgIconX = 8, imgIconY = 8, imgIconW = Math.min(24, w * 0.12);
+        ctx.fillStyle = 'rgba(0,0,0,0.08)';
+        ctx.fillRect(imgIconX, imgIconY, imgIconW, imgIconW);
+        ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(imgIconX + 0.5, imgIconY + 0.5, imgIconW - 1, imgIconW - 1);
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.font = `${Math.min(12, imgIconW * 0.55)}px system-ui`;
+        ctx.fillText('🖼', imgIconX + 2, imgIconY + imgIconW - 4);
+      } else if (isInput) {
+        ctx.fillStyle = 'rgba(0,0,0,0.04)';
+        ctx.fillRect(4, h * 0.1, w - 8, h * 0.8);
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(4.5, h * 0.1 + 0.5, w - 9, h * 0.8 - 1);
+        if (tag === 'select') {
+          ctx.fillStyle = 'rgba(0,0,0,0.35)';
+          ctx.font = '10px system-ui';
+          ctx.fillText('▼', w - 14, h / 2 + 4);
+        }
+      } else if (isBtn) {
+        if (borderRadius > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'destination-in';
+          roundRect(ctx, 0, 0, w, h, borderRadius);
+          ctx.fill();
+          ctx.restore();
+        }
+        const gradient = ctx.createLinearGradient(0, 0, 0, h);
+        gradient.addColorStop(0, 'rgba(255,255,255,0.15)');
+        gradient.addColorStop(1, 'rgba(0,0,0,0.04)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, w, h);
       }
 
       const borderWidth = Math.min(parseFloat(style.borderTopWidth || 0), 4);
@@ -123,7 +228,6 @@
 
       ctx.fillStyle = fgHex;
       const textContent = (el.textContent || '').trim();
-      const tag = el.tagName.toLowerCase();
       const fontSize = Math.max(10, Math.min(22, size * scale));
       const weight = bold ? 'bold' : (parseInt(style.fontWeight) >= 600 ? '600' : 'normal');
       const family = style.fontFamily.split(',')[0].replace(/"/g, '');
@@ -132,26 +236,25 @@
 
       let displayText;
       if (tag === 'button') {
-        displayText = textContent.slice(0, 16);
+        displayText = textContent.slice(0, 18);
       } else if (tag === 'a') {
-        displayText = textContent.slice(0, 20);
+        displayText = textContent.slice(0, 22);
       } else if (tag === 'input' || tag === 'textarea') {
-        displayText = (el.value || textContent).slice(0, 16) || '[input]';
+        displayText = (el.value || textContent || '').slice(0, 18);
       } else if (tag === 'img') {
-        displayText = (el.alt || '[image]').slice(0, 20);
-      } else if (tag === 'nav' || tag === 'header' || tag === 'footer') {
-        displayText = '[' + tag + '] ' + textContent.slice(0, 12);
-      } else if (tag === 'table' || tag === 'tr' || tag === 'td' || tag === 'th') {
-        const allText = textContent.replace(/\s+/g, ' ');
-        displayText = '[table] ' + allText.slice(0, 14);
+        displayText = (el.alt || '[image]').slice(0, 22);
+      } else if (isTable) {
+        displayText = textContent.replace(/\s+/g, ' ').slice(0, 20);
+      } else if (isNav) {
+        displayText = textContent.replace(/\s+/g, ' · ').slice(0, 24);
       } else {
-        displayText = textContent.slice(0, 24);
+        displayText = textContent.slice(0, 28);
       }
       if (!displayText) displayText = '[...]';
 
-      const x = padL + 2;
-      const y = Math.min(h / 2 - fontSize / 2, padT + 2);
-      const maxWidth = w - x - 6;
+      const x = padL + 6 + (hasImg ? Math.min(32, w * 0.12) : 0);
+      const y = Math.min(h / 2 - fontSize / 2, padT + 6);
+      const maxWidth = w - x - 8;
       let textToDraw = displayText;
       if (ctx.measureText(textToDraw).width > maxWidth) {
         while (textToDraw.length > 1 && ctx.measureText(textToDraw + '…').width > maxWidth) {
@@ -161,18 +264,28 @@
       }
       ctx.fillText(textToDraw, x, y);
 
+      ctx.strokeStyle = pass ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)';
+      ctx.lineWidth = 2;
+      roundRect(ctx, 2, 2, w - 4, h - 4, Math.max(2, borderRadius - 1));
+      ctx.stroke();
+      ctx.strokeStyle = pass ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(5, 5, w - 10, h - 10);
+      ctx.setLineDash([]);
+
       const label = `${Math.round(ratio*100)/100}:1 ${level.level}`;
       const labelFont = 11;
       ctx.font = `bold ${labelFont}px system-ui, sans-serif`;
       const labelPad = 5;
       const labelW = ctx.measureText(label).width + labelPad * 2;
       const labelH = labelFont + 6;
-      const lx = w - labelW - 4;
-      const ly = 4;
-      ctx.fillStyle = 'rgba(0,0,0,0.72)';
-      roundRect(ctx, lx, ly, labelW, labelH, 3);
+      const lx = w - labelW - 6;
+      const ly = 6;
+      ctx.fillStyle = pass ? 'rgba(34,197,94,0.96)' : 'rgba(239,68,68,0.96)';
+      roundRect(ctx, lx, ly, labelW, labelH, 4);
       ctx.fill();
-      ctx.fillStyle = pass ? '#22c55e' : '#ef4444';
+      ctx.fillStyle = '#ffffff';
       ctx.textBaseline = 'middle';
       ctx.fillText(label, lx + labelPad, ly + labelH / 2);
 
@@ -209,7 +322,7 @@
       }
       if (!canvas) {
         canvas = document.createElement('canvas');
-        const w = 180, h = 48;
+        const w = 200, h = 56;
         canvas.width = w * 2;
         canvas.height = h * 2;
         const ctx = canvas.getContext('2d');
@@ -217,26 +330,67 @@
         ctx.fillStyle = item.bg;
         ctx.fillRect(0, 0, w, h);
         ctx.fillStyle = item.fg;
-        const fontSize = Math.min(item.fontSize, 18);
+        const fontSize = Math.min(item.fontSize || 14, 18);
         ctx.font = `${item.bold ? 'bold ' : ''}${fontSize}px system-ui, sans-serif`;
-        const text = (item.text || '').slice(0, 18);
-        ctx.fillText(text, 6, fontSize + 4);
+        const text = (item.text || '').slice(0, 22);
+        ctx.fillText(text, 8, h / 2 + fontSize / 3);
         ctx.strokeStyle = item.pass ? '#22c55e' : '#ef4444';
         ctx.lineWidth = 2;
-        ctx.strokeRect(1, 1, w - 2, h - 2);
+        roundRect(ctx, 2, 2, w - 4, h - 4, 4);
+        ctx.stroke();
+        ctx.strokeStyle = item.pass ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(6, 6, w - 12, h - 12);
+        ctx.setLineDash([]);
         const labelColor = item.pass ? '#22c55e' : '#ef4444';
-        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillStyle = labelColor;
         const labelText = `${item.ratio}:1 ${item.level}`;
         ctx.font = 'bold 10px system-ui';
         const tw = ctx.measureText(labelText).width;
-        ctx.fillRect(w - tw - 12, h - 16, tw + 8, 14);
-        ctx.fillStyle = labelColor;
-        ctx.fillText(labelText, w - tw - 8, h - 5);
+        roundRect(ctx, w - tw - 18, h - 22, tw + 10, 16, 3);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(labelText, w - tw - 13, h - 10);
       }
       return canvas.toDataURL('image/png');
     } catch (e) {
       return null;
     }
+  }
+
+  function attachSuggestion(item) {
+    try {
+      const fgRgb = ColorUtils.hexToRgb(item.fg);
+      const bgRgb = ColorUtils.hexToRgb(item.bg);
+      const suggest = ColorUtils.suggestColor(fgRgb, bgRgb, 4.5);
+      if (suggest) {
+        const sHex = ColorUtils.rgbToHex(suggest.r, suggest.g, suggest.b);
+        const sRatio = ColorUtils.contrastRatio(suggest, bgRgb);
+        item.suggestFg = sHex;
+        item.suggestRatio = Math.round(sRatio * 100) / 100;
+      }
+    } catch(e) {}
+  }
+
+  function getRegion(el) {
+    let cur = el;
+    let depth = 0;
+    while (cur && depth < 5 && cur !== document.body) {
+      const tag = cur.tagName?.toLowerCase();
+      if (cur.id && /header|nav|menu|sidebar|aside|footer|content|main|hero|banner/i.test(cur.id)) {
+        const m = cur.id.match(/(header|nav|menu|sidebar|aside|footer|content|main|hero|banner)/i);
+        if (m) return m[1].toLowerCase();
+      }
+      if (cur.className && typeof cur.className === 'string' && /header|nav|menu|sidebar|aside|footer|content|main|hero|banner|toolbar|breadcrumb/i.test(cur.className)) {
+        const m = cur.className.match(/(header|nav|menu|sidebar|aside|footer|content|main|hero|banner|toolbar|breadcrumb)/i);
+        if (m) return m[1].toLowerCase();
+      }
+      if (['header','nav','aside','footer','main'].includes(tag)) return tag;
+      cur = cur.parentElement;
+      depth++;
+    }
+    return 'content';
   }
 
   function scanPage() {
@@ -254,6 +408,7 @@
         const bgHex = ColorUtils.rgbToHex(colors.bg.r, colors.bg.g, colors.bg.b);
         const selector = getSelector(el);
         const rect = el.getBoundingClientRect();
+        const region = getRegion(el);
         const item = {
           text: el.textContent.trim().slice(0, 80),
           selector,
@@ -266,6 +421,7 @@
           pass: level.pass,
           fontSize: size,
           bold,
+          region,
           rect: {
             top: rect.top + window.scrollY,
             left: rect.left + window.scrollX,
@@ -273,7 +429,7 @@
             height: rect.height
           }
         };
-        const matchedRule = findIgnoreRule(fgHex, bgHex, selector);
+        const matchedRule = findIgnoreRule(fgHex, bgHex, selector, location.href);
         if (matchedRule) {
           ignoredItems.push({ ...item, ignoredBecause: matchedRule });
         } else {
@@ -283,8 +439,10 @@
       } catch(e) {}
     });
     scanResults.forEach((item, idx) => {
+      attachSuggestion(item);
       item.thumbnail = generateThumbnail(item, elementMap[idx]);
     });
+    ignoredItems.forEach(item => attachSuggestion(item));
     scanResults.sort((a, b) => a.ratio - b.ratio);
     return { results: scanResults, ignored: ignoredItems };
   }
